@@ -5,7 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -89,7 +89,7 @@ async def health_check() -> Dict[str, str]:
 
 @app.post("/submit")
 async def submit(  # pylint: disable=too-many-arguments
-    mode: str = Form(..., description="Submission mode: 'separate' or 'complex'"),
+    mode: Optional[str] = Form(None, description="Submission mode: 'separate' or 'complex'"),
     vhh_file: Optional[UploadFile] = File(
         None, description="VHH component file for separate uploads"
     ),
@@ -100,13 +100,25 @@ async def submit(  # pylint: disable=too-many-arguments
         None, description="Combined complex file for complex mode"
     ),
     user_params: Optional[str] = Form(None, description="JSON string of user parameters"),
+    numbering_scheme: Optional[str] = Form(
+        None, description="CDR numbering scheme to apply to annotations"
+    ),
+    json_body: Optional[Dict[str, Any]] = Body(
+        None, description="JSON payload alternative for non-multipart submissions"
+    ),
     _: str = Depends(enforce_api_key),
 ) -> Dict[str, Any]:
     """
     Accept a submission for processing and enqueue a background task.
     """
 
-    normalized_mode = mode.strip().lower()
+    json_mode = (json_body or {}).get("mode") if isinstance(json_body, dict) else None
+    normalized_mode_input = mode or json_mode
+
+    if not normalized_mode_input:
+        raise HTTPException(status_code=400, detail="mode must be provided")
+
+    normalized_mode = normalized_mode_input.strip().lower()
     if normalized_mode not in {"separate", "complex"}:
         raise HTTPException(status_code=400, detail="mode must be 'separate' or 'complex'")
 
@@ -122,10 +134,23 @@ async def submit(  # pylint: disable=too-many-arguments
             detail="complex_file is required when mode is 'complex'",
         )
 
+    json_user_params = None
+    if isinstance(json_body, dict):
+        json_user_params = json_body.get("user_params")
+
+    resolved_user_params = user_params if user_params is not None else json_user_params
     try:
-        parsed_params = json.loads(user_params) if user_params else {}
+        if isinstance(resolved_user_params, dict):
+            parsed_params = resolved_user_params
+        else:
+            parsed_params = json.loads(resolved_user_params) if resolved_user_params else {}
     except json.JSONDecodeError as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Invalid user_params JSON: {exc}") from exc
+
+    resolved_numbering_scheme = numbering_scheme
+    if resolved_numbering_scheme is None and isinstance(json_body, dict):
+        resolved_numbering_scheme = json_body.get("numbering_scheme")
+    normalized_scheme = (resolved_numbering_scheme or "chothia").strip().lower()
 
     task_id = storage.generate_task_id()
     task_dir = storage.create_temp_directory(settings.storage_root, task_id)
@@ -149,6 +174,7 @@ async def submit(  # pylint: disable=too-many-arguments
         "files": file_manifest,
         "user_params": parsed_params,
         "task_dir": str(task_dir),
+        "numbering_scheme": normalized_scheme,
     }
 
     task_store.create_task(
@@ -172,6 +198,7 @@ async def submit(  # pylint: disable=too-many-arguments
         "task_id": task_id,
         "job_id": job.id,
         "mode": normalized_mode,
+        "numbering_scheme": normalized_scheme,
         "received_files": list(file_manifest.keys()),
         "status": "queued",
     }
@@ -192,11 +219,16 @@ async def download_artifact(task_id: str, artifact: str) -> FileResponse:
     if not task:
         raise HTTPException(status_code=404, detail="task_id not found")
 
+    if task.get("status") != "succeeded":
+        raise HTTPException(status_code=400, detail="artifacts available after completion")
+
     metadata = task.get("result_metadata") or {}
     allowed_paths = {
         "structure": metadata.get("structure_path"),
         "scores_csv": metadata.get("scores_csv"),
         "scores_tsv": metadata.get("scores_tsv"),
+        "cdr_annotations_json": metadata.get("cdr_json"),
+        "cdr_annotations_csv": metadata.get("cdr_csv"),
     }
 
     selected_path = allowed_paths.get(artifact)
@@ -211,6 +243,8 @@ async def download_artifact(task_id: str, artifact: str) -> FileResponse:
         "structure": "chemical/x-pdb",
         "scores_csv": "text/csv",
         "scores_tsv": "text/tab-separated-values",
+        "cdr_annotations_json": "application/json",
+        "cdr_annotations_csv": "text/csv",
     }
     media_type = media_types.get(artifact, "application/octet-stream")
 
