@@ -89,9 +89,8 @@ AbDesign is a web service platform for antibody structure analysis and design. T
 - **tasks.py**: Background task definitions
 - **queue.py**: Redis queue management
 
-#### 4. AbNumber Integration (`abnumber/`)
-- Built-in minimal AbNumber implementation (optional)
-- Support for using abnumber package directly from PyPI
+#### 4. AbNumber Integration (upstream PyPI package)
+- Relies on upstream `abnumber[anarci]` from PyPI for full ANARCI numbering
 
 ## Installation and Deployment
 
@@ -284,10 +283,9 @@ AbDesign/
 │   ├── worker.py          # Worker main program
 │   ├── tasks.py           # Task definitions
 │   └── queue.py           # Queue management
-├── abnumber/              # AbNumber integration
-│   └── __init__.py
 ├── scripts/               # Utility scripts
-│   └── smoke_test.py      # Smoke test
+│   ├── smoke_test.py      # Smoke test
+│   └── verify_abnumber.py # Upstream AbNumber verification
 ├── samples/               # Sample files
 │   ├── vhh_sample.pdb     # VHH sample structure
 │   └── target_sample.pdb  # Target sample structure
@@ -306,10 +304,9 @@ AbDesign/
 | `uvicorn` | 0.32.0 | ASGI server |
 | `redis` | 5.2.1 | Redis client |
 | `rq` | 1.16.2 | Task queue |
-| `abnumber` | 2.2.1 | Antibody numbering and CDR recognition |
-| `biopython` | 1.83 | Bioinformatics tools |
+| `abnumber[anarci]` | 0.3.1 | Antibody numbering and CDR recognition (with ANARCI) |
+| `biopython` | 1.84 | Bioinformatics tools |
 | `gemmi` | 0.6.8 | Structure file parsing |
-| `numpy` | 1.26.4 | Numerical computation |
 
 ## Development Features
 
