@@ -16,8 +16,17 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 from types import SimpleNamespace
 
-from abnumber import Chain
-from Bio.PDB import MMCIFParser, PDBParser, PPBuilder
+try:  # pragma: no cover - optional dependency
+    from abnumber import Chain
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    Chain = None
+
+try:  # pragma: no cover - optional dependency
+    from Bio.PDB import MMCIFParser, PDBParser, PPBuilder
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    MMCIFParser = None
+    PDBParser = None
+    PPBuilder = None
 
 LOGGER = logging.getLogger(__name__)
 
@@ -49,10 +58,24 @@ def annotate_cdrs(
     json_path = output_dir / "cdr_annotations.json"
     csv_path = output_dir / "cdr_annotations.csv"
 
+    if Chain is None:
+        payload = {
+            "status": "failed",
+            "reason": "abnumber is not installed; skipping CDR annotation",
+            "scheme": scheme,
+            "chain_type": chain_type,
+            "sequence": None,
+            "cdrs": [],
+            "numbering": [],
+        }
+        json_path.write_text(json.dumps(payload, indent=2))
+        csv_path.write_text("name,start,end,length,sequence\n")
+        return payload
+
     try:
         sequence = _extract_sequence(structure_path, chain_id)
     except ValueError as exc:  # noqa: BLE001
-        payload: Dict[str, Any] = {
+        payload = {
             "status": "failed",
             "reason": str(exc),
             "scheme": scheme,
@@ -99,6 +122,9 @@ def annotate_cdrs(
 
 
 def _extract_sequence(structure_path: Path, chain_id: Optional[str]) -> str:
+    if PPBuilder is None:
+        raise ValueError("Biopython is required to extract sequences for CDR annotation")
+
     parser = _select_parser(structure_path)
     structure = parser.get_structure("query", str(structure_path))
 
@@ -114,6 +140,8 @@ def _extract_sequence(structure_path: Path, chain_id: Optional[str]) -> str:
 
 
 def _select_parser(structure_path: Path):
+    if PDBParser is None:
+        raise ValueError("Biopython is required to parse structures for CDR annotation")
     suffix = structure_path.suffix.lower()
     if suffix == ".cif":
         return MMCIFParser(QUIET=True)
