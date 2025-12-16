@@ -1,11 +1,12 @@
 import json
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
-from api import storage, task_store
+from api import results, storage, task_store
 from worker.queue import get_queue
 from worker.tasks import run_pipeline
 
@@ -124,18 +125,46 @@ async def submit(  # pylint: disable=too-many-arguments
 
 @app.get("/result/{task_id}")
 async def get_result(task_id: str) -> Dict[str, Any]:
-    """Return task status and placeholder result metadata."""
+    """Return task status, scores, and download links."""
     logger.info("Fetching result metadata for task %s", task_id)
+    return results.get_result(task_id)
+
+
+@app.get("/download/{task_id}/{artifact}")
+async def download_artifact(task_id: str, artifact: str) -> FileResponse:
+    """Download a specific artifact for a task, restricted to known outputs."""
+
     task = task_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="task_id not found")
 
-    return {
-        "task_id": task_id,
-        "status": task.get("status", "unknown"),
-        "result_metadata": task.get("result_metadata"),
-        "error": task.get("error"),
+    metadata = task.get("result_metadata") or {}
+    allowed_paths = {
+        "structure": metadata.get("structure_path"),
+        "scores_csv": metadata.get("scores_csv"),
+        "scores_tsv": metadata.get("scores_tsv"),
     }
+
+    selected_path = allowed_paths.get(artifact)
+    if not selected_path:
+        raise HTTPException(status_code=404, detail="artifact not found")
+
+    file_path = Path(selected_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="artifact file missing")
+
+    media_types = {
+        "structure": "chemical/x-pdb",
+        "scores_csv": "text/csv",
+        "scores_tsv": "text/tab-separated-values",
+    }
+    media_type = media_types.get(artifact, "application/octet-stream")
+
+    return FileResponse(
+        file_path,
+        media_type=media_type,
+        filename=file_path.name,
+    )
 
 
 if __name__ == "__main__":
