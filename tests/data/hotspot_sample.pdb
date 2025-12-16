@@ -1,0 +1,15 @@
+HEADER    TEST STRUCTURE FOR HOTSPOT MAPPING
+ATOM      1  N   ALA A  54      11.104  13.207  10.334  1.00 20.00           N
+ATOM      2  CA  ALA A  54      11.604  14.207  10.834  1.00 20.00           C
+ATOM      3  C   ALA A  54      12.804  14.007  11.734  1.00 20.00           C
+ATOM      4  O   ALA A  54      13.104  12.907  12.134  1.00 20.00           O
+ATOM      5  N   CYS A  55      13.504  15.107  12.034  1.00 20.00           N
+ATOM      6  CA  CYS A  55      14.704  14.807  12.934  1.00 20.00           C
+ATOM      7  C   CYS A  55      15.804  15.907  13.234  1.00 20.00           C
+ATOM      8  O   CYS A  55      16.804  15.707  13.934  1.00 20.00           O
+ATOM      9  N   GLY A  55A     15.504  17.107  12.734  1.00 20.00           N
+ATOM     10  CA  GLY A  55A     16.604  18.107  12.934  1.00 20.00           C
+ATOM     11  C   GLY A  55A     17.804  17.807  13.834  1.00 20.00           C
+ATOM     12  O   GLY A  55A     18.804  18.507  14.034  1.00 20.00           O
+TER
+END

@@ -61,6 +61,25 @@ def _enforce_rate_limit(identifier: str) -> None:
     _rate_limit_registry[identifier] = recent
 
 
+def _validate_target_hotspots(user_params: Dict[str, Any]) -> None:
+    if "target_hotspots" not in user_params:
+        return
+
+    hotspots = user_params["target_hotspots"]
+    if not isinstance(hotspots, list):
+        raise HTTPException(
+            status_code=400,
+            detail="target_hotspots must be a list of strings like 'A:305' or objects with chain/resi/ins fields",
+        )
+
+    for entry in hotspots:
+        if not isinstance(entry, (str, dict)):
+            raise HTTPException(
+                status_code=400,
+                detail="target_hotspots entries must be strings (e.g. 'A:305') or dict objects with chain/resi/ins fields",
+            )
+
+
 async def enforce_api_key(request: Request) -> str:
     provided_key = request.headers.get(API_KEY_HEADER, "")
     if settings.api_key and provided_key != settings.api_key:
@@ -147,6 +166,9 @@ async def submit(  # pylint: disable=too-many-arguments
     except json.JSONDecodeError as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Invalid user_params JSON: {exc}") from exc
 
+    if isinstance(parsed_params, dict):
+        _validate_target_hotspots(parsed_params)
+
     resolved_numbering_scheme = numbering_scheme
     if resolved_numbering_scheme is None and isinstance(json_body, dict):
         resolved_numbering_scheme = json_body.get("numbering_scheme")
@@ -231,6 +253,8 @@ async def download_artifact(task_id: str, artifact: str) -> FileResponse:
         "scores_tsv": metadata.get("scores_tsv"),
         "cdr_json": metadata.get("cdr_json"),
         "cdr_csv": metadata.get("cdr_csv"),
+        "target_residue_mapping": metadata.get("target_residue_mapping"),
+        "target_hotspots_resolved": metadata.get("target_hotspots_resolved"),
     }
 
     selected_path = allowed_paths.get(artifact)
@@ -247,6 +271,8 @@ async def download_artifact(task_id: str, artifact: str) -> FileResponse:
         "scores_tsv": "text/tab-separated-values",
         "cdr_csv": "text/csv",
         "cdr_json": "application/json",
+        "target_residue_mapping": "application/json",
+        "target_hotspots_resolved": "application/json",
     }
 
     media_type = media_types.get(artifact)

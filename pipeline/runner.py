@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
 from pipeline.cdr import CDRArtifacts, annotate_cdrs
+from pipeline.epitope.mapping import ResolveResult, build_residue_mapping, resolve_hotspots
+from pipeline.epitope.spec import normalize_target_hotspots
 
 
 @dataclass
@@ -66,6 +68,8 @@ class PipelineArtifacts:
     summary_json: Path
     cdr_json: Optional[Path] = None
     cdr_csv: Optional[Path] = None
+    target_residue_mapping: Optional[Path] = None
+    target_hotspots_resolved: Optional[Path] = None
 
 
 @dataclass
@@ -79,6 +83,9 @@ class PipelineResult:
     binding_site_prediction: Dict[str, Any]
     scoring: Dict[str, Any]
     cdr_annotation: Optional[Dict[str, Any]]
+    target_hotspots_input: Optional[list]
+    target_hotspots_resolved: Optional[ResolveResult]
+    target_mapping_file: Optional[Path]
     config: Dict[str, Any]
 
 
@@ -117,6 +124,7 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
     binding_site_result = _predict_binding_sites(config.binding_site, inputs)
     scoring_result = _score_models(config.scoring, binding_site_result, inputs)
     cdr_annotation = _maybe_annotate_cdrs(inputs, CDRArtifacts(cdr_json_path, cdr_csv_path))
+    hotspot_payload = _maybe_process_hotspots(inputs, config.output_dir)
 
     mock_score = scoring_result.get("summary_score", 0.0)
 
@@ -133,12 +141,17 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         "binding_site_prediction": binding_site_result,
         "scoring": scoring_result,
         "cdr_annotation": cdr_annotation,
+        "target_hotspots_input": hotspot_payload.get("input") if hotspot_payload else None,
+        "target_hotspots_resolved": hotspot_payload.get("resolved_summary") if hotspot_payload else None,
+        "target_mapping_file": str(hotspot_payload.get("mapping_path")) if hotspot_payload else None,
         "artifacts": {
             "structure": str(predicted_path),
             "scores_csv": str(scores_csv_path),
             "scores_tsv": str(scores_tsv_path),
             "cdr_json": str(cdr_json_path) if cdr_annotation else None,
             "cdr_csv": str(cdr_csv_path) if cdr_annotation else None,
+            "target_residue_mapping": str(hotspot_payload.get("mapping_path")) if hotspot_payload else None,
+            "target_hotspots_resolved": str(hotspot_payload.get("resolved_path")) if hotspot_payload else None,
         },
     }
     summary_path.write_text(json.dumps(summary_payload, indent=2))
@@ -150,6 +163,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         summary_json=summary_path,
         cdr_json=cdr_json_path if cdr_annotation else None,
         cdr_csv=cdr_csv_path if cdr_annotation else None,
+        target_residue_mapping=hotspot_payload.get("mapping_path") if hotspot_payload else None,
+        target_hotspots_resolved=hotspot_payload.get("resolved_path") if hotspot_payload else None,
     )
     return PipelineResult(
         artifacts=artifacts,
@@ -159,6 +174,9 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         binding_site_prediction=binding_site_result,
         scoring=scoring_result,
         cdr_annotation=cdr_annotation,
+        target_hotspots_input=hotspot_payload.get("input") if hotspot_payload else None,
+        target_hotspots_resolved=hotspot_payload.get("resolve_result") if hotspot_payload else None,
+        target_mapping_file=hotspot_payload.get("mapping_path") if hotspot_payload else None,
         config={**config.config_dict, "cdr_annotation": cdr_annotation},
     )
 
@@ -215,6 +233,35 @@ def _serialize_config(config: PipelineConfig) -> Dict[str, Any]:
 
     config_dict = asdict(config)
     return {key: _convert(val) for key, val in config_dict.items()}
+
+
+def _maybe_process_hotspots(inputs: Mapping[str, Any], output_dir: Path) -> Optional[Dict[str, Any]]:
+    user_params = inputs.get("user_params") or {}
+    raw_hotspots = user_params.get("target_hotspots")
+    if raw_hotspots is None:
+        return None
+
+    auth_hotspots = normalize_target_hotspots(raw_hotspots)
+    structure_path = _select_structure_for_hotspots(inputs.get("files", {}))
+
+    mapping_result = build_residue_mapping(structure_path)
+    mapping_path = output_dir / "target_residue_mapping.json"
+    mapping_result.write_json(mapping_path)
+
+    resolve_result = resolve_hotspots(auth_hotspots, mapping_result)
+    resolved_path = output_dir / "target_hotspots_resolved.json"
+    resolve_result.write_json(resolved_path)
+
+    if resolve_result.errors:
+        raise ValueError(f"Failed to resolve target hotspots: {'; '.join(resolve_result.errors)}")
+
+    return {
+        "input": [asdict(ref) for ref in auth_hotspots],
+        "resolve_result": resolve_result,
+        "resolved_summary": resolve_result.to_dict(),
+        "mapping_path": mapping_path,
+        "resolved_path": resolved_path,
+    }
 
 
 def _run_structure_alignment(
@@ -387,6 +434,18 @@ def _maybe_path(value: Any) -> Optional[Path]:
     if value is None:
         return None
     return Path(value)
+
+
+def _select_structure_for_hotspots(files: Mapping[str, Any]) -> Path:
+    structure_path = files.get("target_file") or files.get("complex_file") or next(iter(files.values()), None)
+    if not structure_path:
+        raise ValueError("No structure file available to build hotspot mapping")
+
+    path = Path(structure_path)
+    if not path.exists():
+        raise ValueError(f"Hotspot structure file does not exist: {path}")
+
+    return path
 
 
 def _maybe_annotate_cdrs(inputs: Mapping[str, Any], artifacts: CDRArtifacts) -> Optional[Dict[str, Any]]:

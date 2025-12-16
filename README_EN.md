@@ -187,6 +187,15 @@ curl -X POST "http://localhost:8000/submit" \
   -F "numbering_scheme=imgt"
 ```
 
+**Including target hotspots (pdb_auth) via user_params:**
+```bash
+curl -X POST "http://localhost:8000/submit" \
+  -F "mode=separate" \
+  -F "vhh_file=@samples/vhh_sample.pdb" \
+  -F "target_file=@samples/target_sample.pdb" \
+  -F "user_params={\"target_hotspots\":[\"A:305\",\"A:456\",\"B:52A\"]}"
+```
+
 ### Query Results
 
 ```bash
