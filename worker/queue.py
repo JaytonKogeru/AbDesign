@@ -1,7 +1,6 @@
 """Queue utilities backed by Redis or fakeredis for local development."""
 from __future__ import annotations
 
-import os
 import logging
 from typing import Optional
 
@@ -9,6 +8,8 @@ import fakeredis
 import redis
 from redis.exceptions import RedisError
 from rq import Queue
+
+from api.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,8 @@ def get_redis_connection() -> redis.Redis:
     server is used so that multiple queues in the same process can share state.
     """
 
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    settings = get_settings()
+    redis_url = settings.redis_url
     try:
         connection = redis.Redis.from_url(redis_url)
         connection.ping()
@@ -32,9 +34,10 @@ def get_redis_connection() -> redis.Redis:
         return fakeredis.FakeStrictRedis(server=_FAKE_SERVER)
 
 
-def get_queue(name: str = "default", connection: Optional[redis.Redis] = None) -> Queue:
+def get_queue(name: Optional[str] = None, connection: Optional[redis.Redis] = None) -> Queue:
     """Create or return an RQ queue bound to the provided connection."""
 
+    settings = get_settings()
     conn = connection or get_redis_connection()
-    return Queue(name, connection=conn)
+    return Queue(name or settings.queue_name, connection=conn)
 
