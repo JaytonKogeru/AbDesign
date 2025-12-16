@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
+import abnumber
+
 from pipeline.cdr import CDRAnnotationResult, annotate_cdrs
 
 
@@ -290,7 +292,13 @@ def _run_cdr_annotation(
     structure_path = files.get("vhh_file") or files.get("complex_file")
 
     if not structure_path:
-        payload = {"status": "skipped", "reason": "no VHH structure provided", "scheme": scheme, "chains": []}
+        payload = {
+            "status": "skipped",
+            "reason": "no VHH structure provided",
+            "scheme": scheme,
+            "chains": [],
+            "abnumber_version": getattr(abnumber, "__version__", "unknown"),
+        }
         _write_cdr_outputs(payload, json_destination, csv_destination)
         return payload
 
@@ -302,18 +310,24 @@ def _run_cdr_annotation(
             "error": str(exc),
             "scheme": scheme,
             "chains": [],
+            "abnumber_version": getattr(abnumber, "__version__", "unknown"),
         }
         _write_cdr_outputs(payload, json_destination, csv_destination)
         return payload
 
     annotation_payload = _serialize_cdr_annotation(annotations)
-    enriched_payload = {**annotation_payload, "status": "succeeded"}
+    enriched_payload = {
+        **annotation_payload,
+        "status": "succeeded",
+        "abnumber_version": getattr(abnumber, "__version__", "unknown"),
+    }
     _write_cdr_outputs(enriched_payload, json_destination, csv_destination)
 
     return {
         "status": "succeeded",
         "scheme": annotation_payload["scheme"],
         "chains": annotation_payload["chains"],
+        "abnumber_version": getattr(abnumber, "__version__", "unknown"),
         "artifacts": {
             "json": str(json_destination),
             "csv": str(csv_destination),

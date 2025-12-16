@@ -3,32 +3,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Tuple
+from typing import Dict, List, Mapping, MutableMapping
 
-from third_party.abnumber import Chain
+import gemmi
 
-_THREE_TO_ONE = {
-    "ALA": "A",
-    "ARG": "R",
-    "ASN": "N",
-    "ASP": "D",
-    "CYS": "C",
-    "GLN": "Q",
-    "GLU": "E",
-    "GLY": "G",
-    "HIS": "H",
-    "ILE": "I",
-    "LEU": "L",
-    "LYS": "K",
-    "MET": "M",
-    "PHE": "F",
-    "PRO": "P",
-    "SER": "S",
-    "THR": "T",
-    "TRP": "W",
-    "TYR": "Y",
-    "VAL": "V",
-}
+from abnumber import Chain
 
 
 @dataclass
@@ -93,38 +72,48 @@ def annotate_cdrs(structure_path: Path | str, scheme: str = "chothia") -> CDRAnn
 
 
 def _extract_sequences(structure: Path) -> Mapping[str, str]:
-    """Parse chain sequences from a PDB-like structure file."""
+    """Parse chain sequences from a PDB or CIF structure file."""
 
     if not structure.exists():
         raise FileNotFoundError(structure)
 
-    raw_sequences: MutableMapping[str, List[str]] = {}
-    seen_residues: set[Tuple[str, str]] = set()
+    try:
+        parsed = gemmi.read_structure(str(structure))
+    except Exception as exc:  # noqa: BLE001
+        raise SequenceParsingError(f"Failed to read structure {structure}: {exc}") from exc
 
-    for line in _iter_structure_lines(structure):
-        if not line.startswith("ATOM"):
+    if not parsed:
+        raise SequenceParsingError(f"Unable to parse structure {structure}")
+
+    model = parsed[0]
+    sequences: MutableMapping[str, List[str]] = {}
+    for chain in model:
+        if chain.get_polymer_type() != gemmi.PolymerType.PeptideL:
             continue
-        if len(line) < 26:
+        chain_id = chain.name or "?"
+        sequence = _sequence_from_chain(chain)
+        if sequence:
+            sequences[chain_id] = sequence
+
+    return sequences
+
+
+def _sequence_from_chain(chain: gemmi.Chain) -> str:
+    residues: List[str] = []
+    seen_positions: set[tuple[int, str]] = set()
+    for residue in chain:
+        if not residue.is_amino_acid():
             continue
-        chain_id = line[21].strip() or "?"
-        res_name = line[17:20].strip().upper()
-        res_seq = line[22:26].strip()
-
-        residue_key = (chain_id, res_seq)
-        if residue_key in seen_residues:
+        seqid = residue.seqid
+        residue_key = (seqid.num, seqid.icode)
+        if residue_key in seen_positions:
             continue
-        seen_residues.add(residue_key)
+        seen_positions.add(residue_key)
 
-        amino_acid = _THREE_TO_ONE.get(res_name, "X")
-        raw_sequences.setdefault(chain_id, []).append(amino_acid)
+        aa = gemmi.find_aa(residue.name)
+        residues.append(aa.one_letter_code if aa else "X")
 
-    return {cid: "".join(residues) for cid, residues in raw_sequences.items()}
-
-
-def _iter_structure_lines(structure: Path) -> Iterable[str]:
-    content = structure.read_text().splitlines()
-    for line in content:
-        yield line.rstrip("\n")
+    return "".join(residues)
 
 
 __all__ = ["annotate_cdrs", "CDRAnnotationResult", "ChainAnnotation", "SequenceParsingError"]
