@@ -21,6 +21,6 @@ def get_result(task_id: str) -> Dict[str, Any]:
         "task_id": task_id,
         "status": task.get("status", "unknown"),
         "result_metadata": metadata,
-        "cdr_summary": metadata.get("cdr_summary"),
+        "cdr_summary": metadata.get("cdr_summary") or {},
         "error": task.get("error"),
     }

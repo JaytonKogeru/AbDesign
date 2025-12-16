@@ -132,6 +132,7 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         "files": inputs.get("files", {}),
         "config": config.config_dict,
         "cdr_scheme": numbering_scheme,
+        "numbering_scheme": numbering_scheme,
         "alignment": alignment_result,
         "binding_site_prediction": binding_site_result,
         "scoring": scoring_result,
