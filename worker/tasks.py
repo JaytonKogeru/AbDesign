@@ -33,12 +33,15 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         pipeline_result = execute_pipeline(payload["mode"], pipeline_inputs)
 
         summary_path = pipeline_result.artifacts.summary_json
+        cdr_summary = _build_cdr_summary(pipeline_result.cdr_annotation)
         summary_payload = {
             "task_id": task_id,
             "mode": payload["mode"],
             "user_params": payload.get("user_params", {}),
             "files": payload.get("files", {}),
+            "numbering_scheme": pipeline_result.numbering_scheme,
             "pipeline": {
+                "numbering_scheme": pipeline_result.numbering_scheme,
                 "alignment": pipeline_result.alignment,
                 "binding_site_prediction": pipeline_result.binding_site_prediction,
                 "scoring": pipeline_result.scoring,
@@ -53,6 +56,7 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 "cdr_json": str(pipeline_result.artifacts.cdr_json),
                 "cdr_csv": str(pipeline_result.artifacts.cdr_csv),
             },
+            "cdr_summary": cdr_summary,
             "summary_score": pipeline_result.summary_score,
         }
         summary_path.write_text(json.dumps(summary_payload, indent=2))
@@ -69,6 +73,8 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 "cdr_csv": str(pipeline_result.artifacts.cdr_csv),
                 "summary_score": pipeline_result.summary_score,
                 "pipeline": summary_payload["pipeline"],
+                "numbering_scheme": pipeline_result.numbering_scheme,
+                "cdr_summary": cdr_summary,
             },
         )
         logger.info("Task %s completed with score %.2f", task_id, pipeline_result.summary_score)
@@ -85,3 +91,16 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         logger.exception("Task %s failed", task_id)
         task_store.update_task(task_id, status="failed", error=str(exc))
         raise
+
+
+def _build_cdr_summary(annotation: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "scheme": annotation.get("scheme"),
+        "chains": [
+            {
+                "chain_id": chain.get("chain_id"),
+                "cdrs": chain.get("cdrs", []),
+            }
+            for chain in annotation.get("chains", [])
+        ],
+    }

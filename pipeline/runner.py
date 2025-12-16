@@ -49,6 +49,7 @@ class PipelineConfig:
 
     mode: str
     output_dir: Path
+    cdr_numbering_scheme: str = "chothia"
     alignment: AlignmentConfig = field(default_factory=AlignmentConfig)
     binding_site: BindingSiteConfig = field(default_factory=BindingSiteConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
@@ -73,6 +74,7 @@ class PipelineResult:
 
     artifacts: PipelineArtifacts
     summary_score: float
+    numbering_scheme: str
     alignment: Dict[str, Any]
     binding_site_prediction: Dict[str, Any]
     scoring: Dict[str, Any]
@@ -100,7 +102,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         in real algorithms later.
     """
 
-    config = _build_config(mode, inputs)
+    numbering_scheme = _resolve_numbering_scheme(inputs)
+    config = _build_config(mode, inputs, numbering_scheme)
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     predicted_path = config.output_dir / "predicted.pdb"
@@ -113,7 +116,9 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
     alignment_result = _run_structure_alignment(config.alignment, inputs)
     binding_site_result = _predict_binding_sites(config.binding_site, inputs)
     scoring_result = _score_models(config.scoring, binding_site_result, inputs)
-    cdr_result = _run_cdr_annotation(inputs, cdr_json_path, cdr_csv_path)
+    cdr_result = _run_cdr_annotation(
+        inputs, numbering_scheme, cdr_json_path, cdr_csv_path
+    )
 
     mock_score = scoring_result.get("summary_score", 0.0)
 
@@ -124,6 +129,7 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         "mode": mode,
         "files": inputs.get("files", {}),
         "config": config.config_dict,
+        "cdr_scheme": numbering_scheme,
         "alignment": alignment_result,
         "binding_site_prediction": binding_site_result,
         "scoring": scoring_result,
@@ -149,6 +155,7 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
     return PipelineResult(
         artifacts=artifacts,
         summary_score=mock_score,
+        numbering_scheme=numbering_scheme,
         alignment=alignment_result,
         binding_site_prediction=binding_site_result,
         scoring=scoring_result,
@@ -157,7 +164,16 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
     )
 
 
-def _build_config(mode: str, inputs: Mapping[str, Any]) -> PipelineConfig:
+def _resolve_numbering_scheme(inputs: Mapping[str, Any]) -> str:
+    scheme = inputs.get("numbering_scheme")
+    if not scheme:
+        scheme = inputs.get("cdr_scheme")
+    return str(scheme or "chothia")
+
+
+def _build_config(
+    mode: str, inputs: Mapping[str, Any], numbering_scheme: str
+) -> PipelineConfig:
     output_dir = Path(inputs.get("output_dir", Path.cwd() / "outputs"))
 
     alignment = AlignmentConfig(
@@ -180,6 +196,7 @@ def _build_config(mode: str, inputs: Mapping[str, Any]) -> PipelineConfig:
     config = PipelineConfig(
         mode=mode,
         output_dir=output_dir,
+        cdr_numbering_scheme=numbering_scheme,
         alignment=alignment,
         binding_site=binding_site,
         scoring=scoring,
@@ -263,10 +280,13 @@ def _score_models(
 
 
 def _run_cdr_annotation(
-    inputs: Mapping[str, Any], json_destination: Path, csv_destination: Path
+    inputs: Mapping[str, Any],
+    numbering_scheme: str,
+    json_destination: Path,
+    csv_destination: Path,
 ) -> Dict[str, Any]:
     files = inputs.get("files", {})
-    scheme = inputs.get("cdr_scheme", "chothia")
+    scheme = numbering_scheme or "chothia"
     structure_path = files.get("vhh_file") or files.get("complex_file")
 
     if not structure_path:
