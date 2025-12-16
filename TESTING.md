@@ -22,8 +22,11 @@ conda activate abdesign
 # 安装 Redis Server (必须，用于任务队列通信)
 conda install -c conda-forge redis-server -y
 
-# 安装 Python 依赖
+# 安装 Python 依赖（包含 AbNumber 所需的 numpy/biopython/gemmi 等）
 pip install -r requirements.txt
+
+# 若使用仓库内置的 AbNumber 精简实现，确保仓库路径在 PYTHONPATH 中
+export PYTHONPATH="$(pwd):$PYTHONPATH"
 ```
 
 ## 启动服务
@@ -68,6 +71,19 @@ python scripts/smoke_test.py --base-url http://localhost:8000
 ```bash
 python scripts/smoke_test.py --base-url http://localhost:8000 --api-key <YOUR_KEY>
 ```
+
+## CDR 标注功能示例
+- 上传 VHH 结构：可以使用仓库中的 `samples/vhh_sample.pdb`，以 `separate` 模式提交。
+- 指定编号方案：通过 `/submit` 的 `numbering_scheme` 字段（默认 `chothia`）。例如：
+  ```bash
+  curl -X POST "http://localhost:8000/submit" \
+    -F mode=separate \
+    -F vhh_file=@samples/vhh_sample.pdb \
+    -F target_file=@samples/target_sample.pdb \
+    -F numbering_scheme=imgt
+  ```
+- 查看结果：轮询 `/result/{task_id}`，响应中的 `cdr_annotations_json`/`cdr_annotations_csv` 字段提供下载链接，`cdr_summary` 中包含每条链的 CDR 位置摘要。
+- 输入约束：CDR 解析当前基于上传结构的 `ATOM` 记录，逐链读取链 ID（不支持显式选择链 ID），若结构缺少 `ATOM` 记录将返回空结果或报错。
 
 ## 常见问题
 - **Worker 接收不到任务**：请确保 `redis-server` 已启动，且 API 和 Worker 连接的是同一个 Redis 实例（默认 `localhost:6379`）。
