@@ -6,7 +6,7 @@
 
 ## 环境准备与依赖安装
 
-推荐使用 Conda 管理环境和非 Python 依赖（如 Redis）。
+推荐使用 Conda 管理环境和非 Python 依赖（如 Redis）。如希望使用 [astral-sh/uv](https://github.com/astral-sh/uv) 来创建虚拟环境，也可以按下述 "可选：使用 uv" 小节操作。
 
 ### 1. 安装 Conda (如果尚未安装)
 如果系统中没有 Conda，请先安装 [Miniconda](https://docs.conda.io/en/latest/miniconda.html) 或 Anaconda。
@@ -27,6 +27,14 @@ pip install -r requirements.txt
 
 # 若使用仓库内置的 AbNumber 精简实现，确保仓库路径在 PYTHONPATH 中
 export PYTHONPATH="$(pwd):$PYTHONPATH"
+```
+
+#### 可选：使用 uv
+如果希望使用 uv 创建隔离环境并安装依赖，可在安装好 uv 后运行：
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
 ```
 
 ## 启动服务
@@ -88,6 +96,10 @@ python scripts/smoke_test.py --base-url http://localhost:8000 --api-key <YOUR_KE
 ## 常见问题
 - **Worker 接收不到任务**：请确保 `redis-server` 已启动，且 API 和 Worker 连接的是同一个 Redis 实例（默认 `localhost:6379`）。
 - **端口冲突**：如果 8000 端口被占用，可以在启动 uvicorn 时指定其他端口，并在 smoke_test.py 中更新 `--base-url`。
+
+## CDR 解析所需的额外工具与依赖
+- **abnumber**：CDR 标注依赖 PyPI 上的 `abnumber` 包，已在 `requirements.txt` 中固定版本，会在 `pip install -r requirements.txt` 或 `uv pip install -r requirements.txt` 时自动安装。
+- **gemmi**：用于解析 PDB/mmCIF 结构。官方提供预编译轮子；如果需要从源代码构建，请确保系统具备 C++17 编译器和 CMake（例如 Debian/Ubuntu 上安装 `build-essential` 与 `cmake`）。
 
 ## 手动验证步骤（可选）
 - 通过 `curl` 查看健康检查：

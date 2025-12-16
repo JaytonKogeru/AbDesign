@@ -8,3 +8,4 @@ requests==2.32.3
 numpy==1.26.4
 biopython==1.83
 gemmi==0.6.8
+abnumber==2.2.1
