@@ -12,9 +12,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
-import abnumber
-
-from pipeline.cdr import CDRAnnotationResult, annotate_cdrs
+from pipeline.cdr import CDRArtifacts, annotate_cdrs
 
 
 @dataclass
@@ -66,8 +64,8 @@ class PipelineArtifacts:
     scores_csv: Path
     scores_tsv: Path
     summary_json: Path
-    cdr_json: Path
-    cdr_csv: Path
+    cdr_json: Optional[Path] = None
+    cdr_csv: Optional[Path] = None
 
 
 @dataclass
@@ -80,7 +78,7 @@ class PipelineResult:
     alignment: Dict[str, Any]
     binding_site_prediction: Dict[str, Any]
     scoring: Dict[str, Any]
-    cdr_annotation: Dict[str, Any]
+    cdr_annotation: Optional[Dict[str, Any]]
     config: Dict[str, Any]
 
 
@@ -118,9 +116,7 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
     alignment_result = _run_structure_alignment(config.alignment, inputs)
     binding_site_result = _predict_binding_sites(config.binding_site, inputs)
     scoring_result = _score_models(config.scoring, binding_site_result, inputs)
-    cdr_result = _run_cdr_annotation(
-        inputs, numbering_scheme, cdr_json_path, cdr_csv_path
-    )
+    cdr_annotation = _maybe_annotate_cdrs(inputs, CDRArtifacts(cdr_json_path, cdr_csv_path))
 
     mock_score = scoring_result.get("summary_score", 0.0)
 
@@ -136,13 +132,13 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         "alignment": alignment_result,
         "binding_site_prediction": binding_site_result,
         "scoring": scoring_result,
-        "cdr_annotation": cdr_result,
+        "cdr_annotation": cdr_annotation,
         "artifacts": {
             "structure": str(predicted_path),
             "scores_csv": str(scores_csv_path),
             "scores_tsv": str(scores_tsv_path),
-            "cdr_json": str(cdr_json_path),
-            "cdr_csv": str(cdr_csv_path),
+            "cdr_json": str(cdr_json_path) if cdr_annotation else None,
+            "cdr_csv": str(cdr_csv_path) if cdr_annotation else None,
         },
     }
     summary_path.write_text(json.dumps(summary_payload, indent=2))
@@ -152,8 +148,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         scores_csv=scores_csv_path,
         scores_tsv=scores_tsv_path,
         summary_json=summary_path,
-        cdr_json=cdr_json_path,
-        cdr_csv=cdr_csv_path,
+        cdr_json=cdr_json_path if cdr_annotation else None,
+        cdr_csv=cdr_csv_path if cdr_annotation else None,
     )
     return PipelineResult(
         artifacts=artifacts,
@@ -162,8 +158,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         alignment=alignment_result,
         binding_site_prediction=binding_site_result,
         scoring=scoring_result,
-        cdr_annotation=cdr_result,
-        config=config.config_dict,
+        cdr_annotation=cdr_annotation,
+        config={**config.config_dict, "cdr_annotation": cdr_annotation},
     )
 
 
@@ -391,3 +387,23 @@ def _maybe_path(value: Any) -> Optional[Path]:
     if value is None:
         return None
     return Path(value)
+
+
+def _maybe_annotate_cdrs(inputs: Mapping[str, Any], artifacts: CDRArtifacts) -> Optional[Dict[str, Any]]:
+    files = inputs.get("files", {})
+    cdr_source = files.get("vhh_file") or files.get("complex_file") or next(iter(files.values()), None)
+
+    if not cdr_source:
+        return None
+
+    scheme = inputs.get("numbering_scheme", "chothia")
+    chain_type = inputs.get("chain_type", "H")
+    chain_id = inputs.get("chain_id")
+
+    try:
+        result = annotate_cdrs(Path(cdr_source), artifacts.json_path.parent, scheme=scheme, chain_type=chain_type, chain_id=chain_id)
+    except Exception as exc:  # noqa: BLE001
+        result = {"status": "failed", "reason": str(exc), "scheme": scheme, "chain_type": chain_type}
+        artifacts.json_path.write_text(json.dumps(result, indent=2))
+        artifacts.csv_path.write_text("name,start,end,length,sequence\n")
+    return result

@@ -4,102 +4,57 @@
 - 默认分支：`work`
 - 当前没有未解决的冲突；使用 `git status -sb` 可快速确认工作区是否干净。
 
-## 环境准备与依赖安装
+## 依赖安装（Conda / uv）
+你可以使用 conda 或 [astral-sh/uv](https://docs.astral.sh/uv/) 来管理依赖，避免 venv。
+仓库曾包含精简的 vendored `abnumber/` 目录，该子集已删除；现在默认从 PyPI 安装上游 `abnumber[anarci]` 包（见 `requirements.txt`），可提供标准的 ANARCI 编号。
 
-推荐使用 Conda 管理环境和非 Python 依赖（如 Redis）。如希望使用 [astral-sh/uv](https://github.com/astral-sh/uv) 来创建虚拟环境，也可以按下述 "可选：使用 uv" 小节操作。
-
-### 1. 安装 Conda (如果尚未安装)
-如果系统中没有 Conda，请先安装 [Miniconda](https://docs.conda.io/en/latest/miniconda.html) 或 Anaconda。
-
-### 2. 创建环境并安装依赖
+### 选项 1：Conda
 ```bash
-# 创建 Python 3.10 环境 (推荐)
-conda create -n abdesign python=3.10 -y
-
-# 激活环境
-conda activate abdesign
-
-# 安装 Redis Server (必须，用于任务队列通信)
-conda install -c conda-forge redis-server -y
-
-# 安装 Python 依赖（包含 AbNumber 所需的 numpy/biopython/gemmi 等）
-pip install -r requirements.txt
-
-# 若使用仓库内置的 AbNumber 精简实现，确保仓库路径在 PYTHONPATH 中
-export PYTHONPATH="$(pwd):$PYTHONPATH"
+conda create -n vhh-api python=3.11 -y
+conda activate vhh-api
+python -m pip install -r requirements.txt
 ```
 
-#### 可选：使用 uv
-如果希望使用 uv 创建隔离环境并安装依赖，可在安装好 uv 后运行：
+### 选项 2：uv
 ```bash
-uv venv
-source .venv/bin/activate
+# 确保已安装 uv：pip install uv
+uv venv .uvenv --python 3.11
+source .uvenv/bin/activate
 uv pip install -r requirements.txt
+
+安装完成后可运行一次快速校验，确保使用的是上游 AbNumber，并且编号能处理插入位点：
+```bash
+python -m unittest tests/test_abnumber_integration.py
+```
 ```
 
-## 启动服务
-
-需要启动三个组件：Redis、API 服务和 Worker。建议在不同的终端窗口中运行，或使用后台运行命令。
-
-### 1. 启动 Redis 服务
-Worker 和 API 通过 Redis 进行通信。
+## 启动服务与 Worker
+在两个终端分别执行：
 ```bash
-# 后台启动 Redis
-redis-server --daemonize yes
-
-# 检查 Redis 是否运行
-ps aux | grep redis-server
-```
-
-### 2. 启动 API 服务
-```bash
-# 确保已激活环境：conda activate abdesign
+# 终端 1：启动 API（默认监听 8000）
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --log-level info
-```
 
-### 3. 启动 Worker
-```bash
-# 确保已激活环境：conda activate abdesign
+# 终端 2：启动队列 Worker
 python -m worker.worker
 ```
 
+如启用了 API Key，设置环境变量 `API_KEY` 并在后续请求中通过 `X-API-Key` 传递。
+
 ## 运行功能冒烟测试
 仓库已提供示例结构文件：`samples/vhh_sample.pdb` 与 `samples/target_sample.pdb`。
-在新的终端执行：
+在第三个终端执行：
 ```bash
-# 确保已激活环境：conda activate abdesign
 python scripts/smoke_test.py --base-url http://localhost:8000
 ```
 脚本会：
 1. 以 `separate` 模式提交示例 VHH/target 文件；
 2. 轮询 `/result/{task_id}` 直至任务完成；
-3. 打印任务状态和生成的工件路径（预测结构与打分表）。
+3. 打印任务状态和生成的工件路径（预测结构、打分表以及 CDR 注释文件）。
 
 若需要 API Key，添加参数：
 ```bash
 python scripts/smoke_test.py --base-url http://localhost:8000 --api-key <YOUR_KEY>
 ```
-
-## CDR 标注功能示例
-- 上传 VHH 结构：可以使用仓库中的 `samples/vhh_sample.pdb`，以 `separate` 模式提交。
-- 指定编号方案：通过 `/submit` 的 `numbering_scheme` 字段（默认 `chothia`）。例如：
-  ```bash
-  curl -X POST "http://localhost:8000/submit" \
-    -F mode=separate \
-    -F vhh_file=@samples/vhh_sample.pdb \
-    -F target_file=@samples/target_sample.pdb \
-    -F numbering_scheme=imgt
-  ```
-- 查看结果：轮询 `/result/{task_id}`，响应中的 `cdr_annotations_json`/`cdr_annotations_csv` 字段提供下载链接，`cdr_summary` 中包含每条链的 CDR 位置摘要。
-- 输入约束：CDR 解析当前基于上传结构的 `ATOM` 记录，逐链读取链 ID（不支持显式选择链 ID），若结构缺少 `ATOM` 记录将返回空结果或报错。
-
-## 常见问题
-- **Worker 接收不到任务**：请确保 `redis-server` 已启动，且 API 和 Worker 连接的是同一个 Redis 实例（默认 `localhost:6379`）。
-- **端口冲突**：如果 8000 端口被占用，可以在启动 uvicorn 时指定其他端口，并在 smoke_test.py 中更新 `--base-url`。
-
-## CDR 解析所需的额外工具与依赖
-- **abnumber**：CDR 标注依赖 PyPI 上的 `abnumber` 包，已在 `requirements.txt` 中固定版本，会在 `pip install -r requirements.txt` 或 `uv pip install -r requirements.txt` 时自动安装。
-- **gemmi**：用于解析 PDB/mmCIF 结构。官方提供预编译轮子；如果需要从源代码构建，请确保系统具备 C++17 编译器和 CMake（例如 Debian/Ubuntu 上安装 `build-essential` 与 `cmake`）。
 
 ## 手动验证步骤（可选）
 - 通过 `curl` 查看健康检查：
