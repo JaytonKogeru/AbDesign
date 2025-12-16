@@ -4,10 +4,22 @@
 - 默认分支：`work`
 - 当前没有未解决的冲突；使用 `git status -sb` 可快速确认工作区是否干净。
 
-## 依赖安装
+## 依赖安装（Conda / uv）
+你可以使用 conda 或 [astral-sh/uv](https://docs.astral.sh/uv/) 来管理依赖，避免 venv。
+
+### 选项 1：Conda
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt requests
+conda create -n vhh-api python=3.11 -y
+conda activate vhh-api
+python -m pip install -r requirements.txt
+```
+
+### 选项 2：uv
+```bash
+# 确保已安装 uv：pip install uv
+uv venv .uvenv --python 3.11
+source .uvenv/bin/activate
+uv pip install -r requirements.txt
 ```
 
 ## 启动服务与 Worker
