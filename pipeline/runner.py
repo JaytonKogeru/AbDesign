@@ -1,0 +1,275 @@
+"""Lightweight runner for orchestrating prediction pipelines.
+
+The module exposes :func:`run_pipeline` as the integration point for worker
+jobs. The initial implementation writes mock artifacts but keeps the structure
+needed to plug in real components such as structure alignment, binding-site
+prediction, and scoring models.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Mapping, MutableMapping, Optional
+
+
+@dataclass
+class AlignmentConfig:
+    """Configuration for structure alignment engines."""
+
+    enabled: bool = True
+    method: str = "rmsd_alignment"
+    reference_structure: Optional[Path] = None
+
+
+@dataclass
+class BindingSiteConfig:
+    """Configuration for binding-site prediction."""
+
+    enabled: bool = True
+    predictor: str = "p2rank"
+    parameters: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ScoringConfig:
+    """Configuration for downstream scoring models."""
+
+    enabled: bool = True
+    model_name: str = "graph-attention-scoring"
+    weights_path: Optional[Path] = None
+    extra_features: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class PipelineConfig:
+    """Top-level configuration passed to the pipeline runner."""
+
+    mode: str
+    output_dir: Path
+    alignment: AlignmentConfig = field(default_factory=AlignmentConfig)
+    binding_site: BindingSiteConfig = field(default_factory=BindingSiteConfig)
+    scoring: ScoringConfig = field(default_factory=ScoringConfig)
+    keep_intermediates: bool = True
+
+
+@dataclass
+class PipelineArtifacts:
+    """Artifact locations produced by the pipeline."""
+
+    structure: Path
+    scores_csv: Path
+    scores_tsv: Path
+    summary_json: Path
+
+
+@dataclass
+class PipelineResult:
+    """Return value that encapsulates artifacts and metadata."""
+
+    artifacts: PipelineArtifacts
+    summary_score: float
+    alignment: Dict[str, Any]
+    binding_site_prediction: Dict[str, Any]
+    scoring: Dict[str, Any]
+    config: Dict[str, Any]
+
+
+def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
+    """Execute the prediction pipeline for the given mode and inputs.
+
+    Parameters
+    ----------
+    mode:
+        Submission mode (e.g. "separate" or "complex"). The value is recorded in
+        the configuration and may influence downstream components.
+    inputs:
+        A mapping that contains user parameters, uploaded file locations, and an
+        optional ``output_dir`` where artifacts will be written.
+
+    Returns
+    -------
+    PipelineResult
+        A structured response that references the created mock artifacts. The
+        layout matches the expected production outputs, making it easy to swap
+        in real algorithms later.
+    """
+
+    config = _build_config(mode, inputs)
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+
+    predicted_path = config.output_dir / "predicted.pdb"
+    scores_csv_path = config.output_dir / "scores.csv"
+    scores_tsv_path = config.output_dir / "scores.tsv"
+    summary_path = config.output_dir / "pipeline_summary.json"
+
+    alignment_result = _run_structure_alignment(config.alignment, inputs)
+    binding_site_result = _predict_binding_sites(config.binding_site, inputs)
+    scoring_result = _score_models(config.scoring, binding_site_result, inputs)
+
+    mock_score = scoring_result.get("summary_score", 0.0)
+
+    _write_mock_structure(predicted_path, mode)
+    _write_mock_scores(scores_csv_path, scores_tsv_path, mock_score)
+
+    summary_payload: MutableMapping[str, Any] = {
+        "mode": mode,
+        "files": inputs.get("files", {}),
+        "config": config.config_dict,
+        "alignment": alignment_result,
+        "binding_site_prediction": binding_site_result,
+        "scoring": scoring_result,
+        "artifacts": {
+            "structure": str(predicted_path),
+            "scores_csv": str(scores_csv_path),
+            "scores_tsv": str(scores_tsv_path),
+        },
+    }
+    summary_path.write_text(json.dumps(summary_payload, indent=2))
+
+    artifacts = PipelineArtifacts(
+        structure=predicted_path,
+        scores_csv=scores_csv_path,
+        scores_tsv=scores_tsv_path,
+        summary_json=summary_path,
+    )
+    return PipelineResult(
+        artifacts=artifacts,
+        summary_score=mock_score,
+        alignment=alignment_result,
+        binding_site_prediction=binding_site_result,
+        scoring=scoring_result,
+        config=config.config_dict,
+    )
+
+
+def _build_config(mode: str, inputs: Mapping[str, Any]) -> PipelineConfig:
+    output_dir = Path(inputs.get("output_dir", Path.cwd() / "outputs"))
+
+    alignment = AlignmentConfig(
+        enabled=inputs.get("alignment_enabled", True),
+        method=inputs.get("alignment_method", "rmsd_alignment"),
+        reference_structure=_maybe_path(inputs.get("reference_structure")),
+    )
+    binding_site = BindingSiteConfig(
+        enabled=inputs.get("binding_site_enabled", True),
+        predictor=inputs.get("binding_site_predictor", "p2rank"),
+        parameters=inputs.get("binding_site_params", {}),
+    )
+    scoring = ScoringConfig(
+        enabled=inputs.get("scoring_enabled", True),
+        model_name=inputs.get("scoring_model", "graph-attention-scoring"),
+        weights_path=_maybe_path(inputs.get("scoring_weights")),
+        extra_features=inputs.get("scoring_features", {}),
+    )
+
+    config = PipelineConfig(
+        mode=mode,
+        output_dir=output_dir,
+        alignment=alignment,
+        binding_site=binding_site,
+        scoring=scoring,
+        keep_intermediates=inputs.get("keep_intermediates", True),
+    )
+    config.config_dict = _serialize_config(config)  # type: ignore[attr-defined]
+    return config
+
+
+def _serialize_config(config: PipelineConfig) -> Dict[str, Any]:
+    def _convert(value: Any) -> Any:
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, dict):
+            return {key: _convert(val) for key, val in value.items()}
+        return value
+
+    config_dict = asdict(config)
+    return {key: _convert(val) for key, val in config_dict.items()}
+
+
+def _run_structure_alignment(
+    config: AlignmentConfig, inputs: Mapping[str, Any]
+) -> Dict[str, Any]:
+    if not config.enabled:
+        return {"status": "skipped", "reason": "alignment disabled"}
+
+    return {
+        "status": "mocked",
+        "method": config.method,
+        "reference_structure": str(config.reference_structure) if config.reference_structure else None,
+        "notes": "Replace with real structure alignment implementation.",
+        "inputs": list(inputs.get("files", {}).keys()),
+    }
+
+
+def _predict_binding_sites(
+    config: BindingSiteConfig, inputs: Mapping[str, Any]
+) -> Dict[str, Any]:
+    if not config.enabled:
+        return {"status": "skipped", "reason": "binding-site prediction disabled"}
+
+    return {
+        "status": "mocked",
+        "predictor": config.predictor,
+        "parameters": config.parameters,
+        "notes": "Hook up binding-site prediction algorithm here.",
+        "inputs": list(inputs.get("files", {}).keys()),
+    }
+
+
+def _score_models(
+    config: ScoringConfig, binding_site_result: Mapping[str, Any], inputs: Mapping[str, Any]
+) -> Dict[str, Any]:
+    if not config.enabled:
+        return {
+            "status": "skipped",
+            "reason": "scoring disabled",
+            "summary_score": 0.0,
+            "models": [],
+        }
+
+    file_count = len(inputs.get("files", {}))
+    summary_score = 0.75 + 0.05 * file_count
+
+    return {
+        "status": "mocked",
+        "model": config.model_name,
+        "weights_path": str(config.weights_path) if config.weights_path else None,
+        "summary_score": round(summary_score, 3),
+        "models": [
+            {
+                "model_id": "mock_model_1",
+                "score": round(summary_score, 3),
+                "features_used": list(config.extra_features.keys()),
+                "binding_site_source": binding_site_result.get("predictor"),
+            }
+        ],
+        "notes": "Connect your scoring model here.",
+    }
+
+
+def _write_mock_structure(destination: Path, mode: str) -> None:
+    pdb_content = f"""
+HEADER    MOCK PREDICTION GENERATED BY pipeline.runner
+REMARK    MODE: {mode}
+ATOM      1  CA  ALA A   1      11.104  13.207  10.334  1.00 20.00           C
+ATOM      2  CA  GLY A   2      12.104  14.207  11.334  1.00 20.00           C
+TER
+END
+""".strip()
+    destination.write_text(pdb_content + "\n")
+
+
+def _write_mock_scores(
+    csv_destination: Path, tsv_destination: Path, summary_score: float
+) -> None:
+    header = "model_id,score,comment\n"
+    row = f"mock_model_1,{summary_score:.3f},placeholder score based on inputs\n"
+    csv_destination.write_text(header + row)
+    tsv_destination.write_text(header.replace(",", "\t") + row.replace(",", "\t"))
+
+
+def _maybe_path(value: Any) -> Optional[Path]:
+    if value is None:
+        return None
+    return Path(value)
