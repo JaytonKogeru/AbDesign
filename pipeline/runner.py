@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
+from pipeline.cdr import CDRAnnotationResult, annotate_cdrs
+
 
 @dataclass
 class AlignmentConfig:
@@ -61,6 +63,8 @@ class PipelineArtifacts:
     scores_csv: Path
     scores_tsv: Path
     summary_json: Path
+    cdr_json: Path
+    cdr_csv: Path
 
 
 @dataclass
@@ -72,6 +76,7 @@ class PipelineResult:
     alignment: Dict[str, Any]
     binding_site_prediction: Dict[str, Any]
     scoring: Dict[str, Any]
+    cdr_annotation: Dict[str, Any]
     config: Dict[str, Any]
 
 
@@ -102,10 +107,13 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
     scores_csv_path = config.output_dir / "scores.csv"
     scores_tsv_path = config.output_dir / "scores.tsv"
     summary_path = config.output_dir / "pipeline_summary.json"
+    cdr_json_path = config.output_dir / "cdr_annotations.json"
+    cdr_csv_path = config.output_dir / "cdr_annotations.csv"
 
     alignment_result = _run_structure_alignment(config.alignment, inputs)
     binding_site_result = _predict_binding_sites(config.binding_site, inputs)
     scoring_result = _score_models(config.scoring, binding_site_result, inputs)
+    cdr_result = _run_cdr_annotation(inputs, cdr_json_path, cdr_csv_path)
 
     mock_score = scoring_result.get("summary_score", 0.0)
 
@@ -119,10 +127,13 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         "alignment": alignment_result,
         "binding_site_prediction": binding_site_result,
         "scoring": scoring_result,
+        "cdr_annotation": cdr_result,
         "artifacts": {
             "structure": str(predicted_path),
             "scores_csv": str(scores_csv_path),
             "scores_tsv": str(scores_tsv_path),
+            "cdr_json": str(cdr_json_path),
+            "cdr_csv": str(cdr_csv_path),
         },
     }
     summary_path.write_text(json.dumps(summary_payload, indent=2))
@@ -132,6 +143,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         scores_csv=scores_csv_path,
         scores_tsv=scores_tsv_path,
         summary_json=summary_path,
+        cdr_json=cdr_json_path,
+        cdr_csv=cdr_csv_path,
     )
     return PipelineResult(
         artifacts=artifacts,
@@ -139,6 +152,7 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         alignment=alignment_result,
         binding_site_prediction=binding_site_result,
         scoring=scoring_result,
+        cdr_annotation=cdr_result,
         config=config.config_dict,
     )
 
@@ -246,6 +260,75 @@ def _score_models(
         ],
         "notes": "Connect your scoring model here.",
     }
+
+
+def _run_cdr_annotation(
+    inputs: Mapping[str, Any], json_destination: Path, csv_destination: Path
+) -> Dict[str, Any]:
+    files = inputs.get("files", {})
+    scheme = inputs.get("cdr_scheme", "chothia")
+    structure_path = files.get("vhh_file") or files.get("complex_file")
+
+    if not structure_path:
+        payload = {"status": "skipped", "reason": "no VHH structure provided", "scheme": scheme, "chains": []}
+        _write_cdr_outputs(payload, json_destination, csv_destination)
+        return payload
+
+    try:
+        annotations = annotate_cdrs(structure_path, scheme=scheme)
+    except Exception as exc:  # noqa: BLE001
+        payload = {
+            "status": "failed",
+            "error": str(exc),
+            "scheme": scheme,
+            "chains": [],
+        }
+        _write_cdr_outputs(payload, json_destination, csv_destination)
+        return payload
+
+    annotation_payload = _serialize_cdr_annotation(annotations)
+    enriched_payload = {**annotation_payload, "status": "succeeded"}
+    _write_cdr_outputs(enriched_payload, json_destination, csv_destination)
+
+    return {
+        "status": "succeeded",
+        "scheme": annotation_payload["scheme"],
+        "chains": annotation_payload["chains"],
+        "artifacts": {
+            "json": str(json_destination),
+            "csv": str(csv_destination),
+        },
+    }
+
+
+def _serialize_cdr_annotation(result: CDRAnnotationResult) -> Dict[str, Any]:
+    chains = []
+    for chain in result.chains:
+        chains.append(
+            {
+                "chain_id": chain.chain_id,
+                "sequence": chain.sequence,
+                "cdrs": chain.cdrs,
+                "numbering": chain.numbering,
+            }
+        )
+
+    return {
+        "scheme": result.scheme,
+        "chains": chains,
+    }
+
+
+def _write_cdr_outputs(payload: Mapping[str, Any], json_destination: Path, csv_destination: Path) -> None:
+    json_destination.write_text(json.dumps(payload, indent=2))
+
+    lines = ["chain_id,cdr_name,start,end,sequence"]
+    for chain in payload.get("chains", []):
+        for cdr in chain.get("cdrs", []):
+            lines.append(
+                f"{chain.get('chain_id','')},{cdr.get('name','')},{cdr.get('start','')},{cdr.get('end','')},{cdr.get('sequence','')}"
+            )
+    csv_destination.write_text("\n".join(lines) + "\n")
 
 
 def _write_mock_structure(destination: Path, mode: str) -> None:
