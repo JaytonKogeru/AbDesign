@@ -1,8 +1,20 @@
 # AbDesign - 抗体设计服务
 
+[![English](https://img.shields.io/badge/docs-English-blue)](README_EN.md)
+[![Architecture](https://img.shields.io/badge/docs-Architecture-green)](ARCHITECTURE.md)
+[![Development](https://img.shields.io/badge/docs-Development-orange)](DEVELOPMENT.md)
+[![Testing](https://img.shields.io/badge/docs-Testing-red)](TESTING.md)
+
 ## 项目简介
 
 AbDesign 是一个用于抗体结构分析和设计的 Web 服务平台。该系统专注于 VHH（重链可变域抗体，也称为纳米抗体）的 CDR（互补决定区）标注、结构预测和结合位点分析。
+
+## 📚 文档导航
+
+- **[README (English)](README_EN.md)** - 英文版说明文档
+- **[架构文档 (ARCHITECTURE.md)](ARCHITECTURE.md)** - 详细的技术架构和模块说明
+- **[开发指南 (DEVELOPMENT.md)](DEVELOPMENT.md)** - 快速开发指南和常见问题
+- **[测试指南 (TESTING.md)](TESTING.md)** - 环境准备和测试方法
 
 ## 核心功能
 

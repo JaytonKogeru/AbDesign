@@ -1,8 +1,20 @@
 # AbDesign - Antibody Design Service
 
+[![中文](https://img.shields.io/badge/docs-中文-blue)](README.md)
+[![Architecture](https://img.shields.io/badge/docs-Architecture-green)](ARCHITECTURE.md)
+[![Development](https://img.shields.io/badge/docs-Development-orange)](DEVELOPMENT.md)
+[![Testing](https://img.shields.io/badge/docs-Testing-red)](TESTING.md)
+
 ## Overview
 
 AbDesign is a web service platform for antibody structure analysis and design. The system focuses on CDR (Complementarity-Determining Region) annotation, structure prediction, and binding site analysis for VHH (Variable domain of Heavy-chain-only antibodies, also known as nanobodies).
+
+## 📚 Documentation Navigation
+
+- **[README (中文)](README.md)** - Chinese version documentation
+- **[Architecture Documentation (ARCHITECTURE.md)](ARCHITECTURE.md)** - Detailed technical architecture and modules
+- **[Development Guide (DEVELOPMENT.md)](DEVELOPMENT.md)** - Quick development guide and troubleshooting
+- **[Testing Guide (TESTING.md)](TESTING.md)** - Environment setup and testing methods
 
 ## Key Features
 
