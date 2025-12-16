@@ -223,12 +223,15 @@ async def download_artifact(task_id: str, artifact: str) -> FileResponse:
         raise HTTPException(status_code=400, detail="artifacts available after completion")
 
     metadata = task.get("result_metadata") or {}
+    cdr_json = metadata.get("cdr_json")
+    cdr_csv = metadata.get("cdr_csv")
     allowed_paths = {
         "structure": metadata.get("structure_path"),
         "scores_csv": metadata.get("scores_csv"),
         "scores_tsv": metadata.get("scores_tsv"),
-        "cdr_annotations_json": metadata.get("cdr_json"),
-        "cdr_annotations_csv": metadata.get("cdr_csv"),
+        "cdr_annotations_json": cdr_json,
+        "cdr_annotations_csv": cdr_csv,
+        "cdr_annotations": cdr_json or cdr_csv,
     }
 
     selected_path = allowed_paths.get(artifact)
@@ -246,7 +249,10 @@ async def download_artifact(task_id: str, artifact: str) -> FileResponse:
         "cdr_annotations_json": "application/json",
         "cdr_annotations_csv": "text/csv",
     }
-    media_type = media_types.get(artifact, "application/octet-stream")
+
+    media_type = media_types.get(artifact)
+    if media_type is None:
+        media_type = "application/json" if file_path.suffix == ".json" else "text/csv"
 
     return FileResponse(
         file_path,
