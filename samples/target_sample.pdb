@@ -1,0 +1,5 @@
+HEADER    SAMPLE TARGET STRUCTURE
+ATOM      1  N   SER B   1       8.000   9.000  10.000  1.00 20.00           N
+ATOM      2  CA  SER B   1       8.500   9.500  10.500  1.00 20.00           C
+TER
+END

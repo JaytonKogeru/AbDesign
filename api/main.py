@@ -197,6 +197,8 @@ async def download_artifact(task_id: str, artifact: str) -> FileResponse:
         "structure": metadata.get("structure_path"),
         "scores_csv": metadata.get("scores_csv"),
         "scores_tsv": metadata.get("scores_tsv"),
+        "cdr_json": metadata.get("cdr_json"),
+        "cdr_csv": metadata.get("cdr_csv"),
     }
 
     selected_path = allowed_paths.get(artifact)
@@ -211,6 +213,8 @@ async def download_artifact(task_id: str, artifact: str) -> FileResponse:
         "structure": "chemical/x-pdb",
         "scores_csv": "text/csv",
         "scores_tsv": "text/tab-separated-values",
+        "cdr_csv": "text/csv",
+        "cdr_json": "application/json",
     }
     media_type = media_types.get(artifact, "application/octet-stream")
 

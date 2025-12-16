@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 *.pyo
+# Avoid accidentally reintroducing the old vendored AbNumber subset
+abnumber/
+abnumber_vendored/

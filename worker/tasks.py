@@ -42,6 +42,7 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 "alignment": pipeline_result.alignment,
                 "binding_site_prediction": pipeline_result.binding_site_prediction,
                 "scoring": pipeline_result.scoring,
+                "cdr_annotation": pipeline_result.cdr_annotation,
                 "config": pipeline_result.config,
             },
             "artifacts": {
@@ -49,8 +50,11 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 "scores_csv": str(pipeline_result.artifacts.scores_csv),
                 "scores_tsv": str(pipeline_result.artifacts.scores_tsv),
                 "summary_json": str(summary_path),
+                "cdr_json": str(pipeline_result.artifacts.cdr_json) if pipeline_result.artifacts.cdr_json else None,
+                "cdr_csv": str(pipeline_result.artifacts.cdr_csv) if pipeline_result.artifacts.cdr_csv else None,
             },
             "summary_score": pipeline_result.summary_score,
+            "cdr_annotation": pipeline_result.cdr_annotation,
         }
         summary_path.write_text(json.dumps(summary_payload, indent=2))
 
@@ -63,6 +67,8 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 "scores_tsv": str(pipeline_result.artifacts.scores_tsv),
                 "summary_json": str(summary_path),
                 "summary_score": pipeline_result.summary_score,
+                "cdr_json": str(pipeline_result.artifacts.cdr_json) if pipeline_result.artifacts.cdr_json else None,
+                "cdr_csv": str(pipeline_result.artifacts.cdr_csv) if pipeline_result.artifacts.cdr_csv else None,
                 "pipeline": summary_payload["pipeline"],
             },
         )
@@ -73,6 +79,8 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             "scores_tsv": str(pipeline_result.artifacts.scores_tsv),
             "summary_json": str(summary_path),
             "summary_score": pipeline_result.summary_score,
+            "cdr_json": str(pipeline_result.artifacts.cdr_json) if pipeline_result.artifacts.cdr_json else None,
+            "cdr_csv": str(pipeline_result.artifacts.cdr_csv) if pipeline_result.artifacts.cdr_csv else None,
         }
     except Exception as exc:  # noqa: BLE001
         logger.exception("Task %s failed", task_id)
