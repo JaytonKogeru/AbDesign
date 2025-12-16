@@ -6,8 +6,10 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, validator
 
+from api.config import get_settings
+
 ALLOWED_EXTENSIONS = {"pdb", "cif"}
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+MAX_FILE_SIZE = get_settings().max_file_size
 
 _fastapi_spec = importlib.util.find_spec("fastapi")
 if _fastapi_spec:

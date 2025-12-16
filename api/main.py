@@ -1,12 +1,16 @@
 import json
 import logging
+import time
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from api import results, storage, task_store
+from api.config import get_settings
 from worker.queue import get_queue
 from worker.tasks import run_pipeline
 
@@ -16,7 +20,56 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+settings = get_settings()
+API_KEY_HEADER = "X-API-Key"
+RATE_LIMIT_WINDOW_SECONDS = 60
+_rate_limit_registry: Dict[str, List[float]] = defaultdict(list)
+
 app = FastAPI(title="Demo Submission API", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):  # type: ignore[override]
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    elapsed = (time.perf_counter() - start_time) * 1000
+    logger.info(
+        "%s %s -> %s in %.2f ms",
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed,
+    )
+    return response
+
+
+def _enforce_rate_limit(identifier: str) -> None:
+    now = time.monotonic()
+    window_start = now - RATE_LIMIT_WINDOW_SECONDS
+    recent = [ts for ts in _rate_limit_registry[identifier] if ts >= window_start]
+    if len(recent) >= settings.rate_limit_per_minute:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    recent.append(now)
+    _rate_limit_registry[identifier] = recent
+
+
+async def enforce_api_key(request: Request) -> str:
+    provided_key = request.headers.get(API_KEY_HEADER, "")
+    if settings.api_key and provided_key != settings.api_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    identifier = provided_key or (request.client.host if request.client else "anonymous")
+    if settings.rate_limit_per_minute > 0:
+        _enforce_rate_limit(identifier)
+    return identifier
 
 
 @app.exception_handler(Exception)
@@ -47,6 +100,7 @@ async def submit(  # pylint: disable=too-many-arguments
         None, description="Combined complex file for complex mode"
     ),
     user_params: Optional[str] = Form(None, description="JSON string of user parameters"),
+    _: str = Depends(enforce_api_key),
 ) -> Dict[str, Any]:
     """
     Accept a submission for processing and enqueue a background task.
@@ -74,7 +128,7 @@ async def submit(  # pylint: disable=too-many-arguments
         raise HTTPException(status_code=400, detail=f"Invalid user_params JSON: {exc}") from exc
 
     task_id = storage.generate_task_id()
-    task_dir = storage.create_temp_directory("/tmp/submissions", task_id)
+    task_dir = storage.create_temp_directory(settings.storage_root, task_id)
 
     async def _store_upload(upload: UploadFile, label: str) -> str:
         content = await upload.read()
@@ -107,7 +161,7 @@ async def submit(  # pylint: disable=too-many-arguments
         },
     )
 
-    queue = get_queue()
+    queue = get_queue(settings.queue_name)
     job = queue.enqueue(run_pipeline, task_id, payload)
 
     logger.info(
