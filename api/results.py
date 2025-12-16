@@ -15,9 +15,12 @@ def get_result(task_id: str) -> Dict[str, Any]:
     if not task:
         raise HTTPException(status_code=404, detail="task_id not found")
 
+    metadata = task.get("result_metadata") or {}
+
     return {
         "task_id": task_id,
         "status": task.get("status", "unknown"),
-        "result_metadata": task.get("result_metadata"),
+        "result_metadata": metadata,
+        "cdr_summary": metadata.get("cdr_summary") or {},
         "error": task.get("error"),
     }

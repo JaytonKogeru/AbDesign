@@ -49,6 +49,7 @@ class PipelineConfig:
 
     mode: str
     output_dir: Path
+    cdr_numbering_scheme: str = "chothia"
     alignment: AlignmentConfig = field(default_factory=AlignmentConfig)
     binding_site: BindingSiteConfig = field(default_factory=BindingSiteConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
@@ -73,6 +74,7 @@ class PipelineResult:
 
     artifacts: PipelineArtifacts
     summary_score: float
+    numbering_scheme: str
     alignment: Dict[str, Any]
     binding_site_prediction: Dict[str, Any]
     scoring: Dict[str, Any]
@@ -100,7 +102,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         in real algorithms later.
     """
 
-    config = _build_config(mode, inputs)
+    numbering_scheme = _resolve_numbering_scheme(inputs)
+    config = _build_config(mode, inputs, numbering_scheme)
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     predicted_path = config.output_dir / "predicted.pdb"
@@ -124,6 +127,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         "mode": mode,
         "files": inputs.get("files", {}),
         "config": config.config_dict,
+        "cdr_scheme": numbering_scheme,
+        "numbering_scheme": numbering_scheme,
         "alignment": alignment_result,
         "binding_site_prediction": binding_site_result,
         "scoring": scoring_result,
@@ -149,6 +154,7 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
     return PipelineResult(
         artifacts=artifacts,
         summary_score=mock_score,
+        numbering_scheme=numbering_scheme,
         alignment=alignment_result,
         binding_site_prediction=binding_site_result,
         scoring=scoring_result,
@@ -157,7 +163,16 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
     )
 
 
-def _build_config(mode: str, inputs: Mapping[str, Any]) -> PipelineConfig:
+def _resolve_numbering_scheme(inputs: Mapping[str, Any]) -> str:
+    scheme = inputs.get("numbering_scheme")
+    if not scheme:
+        scheme = inputs.get("cdr_scheme")
+    return str(scheme or "chothia")
+
+
+def _build_config(
+    mode: str, inputs: Mapping[str, Any], numbering_scheme: str
+) -> PipelineConfig:
     output_dir = Path(inputs.get("output_dir", Path.cwd() / "outputs"))
 
     alignment = AlignmentConfig(
@@ -180,6 +195,7 @@ def _build_config(mode: str, inputs: Mapping[str, Any]) -> PipelineConfig:
     config = PipelineConfig(
         mode=mode,
         output_dir=output_dir,
+        cdr_numbering_scheme=numbering_scheme,
         alignment=alignment,
         binding_site=binding_site,
         scoring=scoring,
@@ -260,6 +276,90 @@ def _score_models(
         ],
         "notes": "Connect your scoring model here.",
     }
+
+
+def _run_cdr_annotation(
+    inputs: Mapping[str, Any],
+    numbering_scheme: str,
+    json_destination: Path,
+    csv_destination: Path,
+) -> Dict[str, Any]:
+    files = inputs.get("files", {})
+    scheme = numbering_scheme or "chothia"
+    structure_path = files.get("vhh_file") or files.get("complex_file")
+
+    if not structure_path:
+        payload = {
+            "status": "skipped",
+            "reason": "no VHH structure provided",
+            "scheme": scheme,
+            "chains": [],
+            "abnumber_version": getattr(abnumber, "__version__", "unknown"),
+        }
+        _write_cdr_outputs(payload, json_destination, csv_destination)
+        return payload
+
+    try:
+        annotations = annotate_cdrs(structure_path, scheme=scheme)
+    except Exception as exc:  # noqa: BLE001
+        payload = {
+            "status": "failed",
+            "error": str(exc),
+            "scheme": scheme,
+            "chains": [],
+            "abnumber_version": getattr(abnumber, "__version__", "unknown"),
+        }
+        _write_cdr_outputs(payload, json_destination, csv_destination)
+        return payload
+
+    annotation_payload = _serialize_cdr_annotation(annotations)
+    enriched_payload = {
+        **annotation_payload,
+        "status": "succeeded",
+        "abnumber_version": getattr(abnumber, "__version__", "unknown"),
+    }
+    _write_cdr_outputs(enriched_payload, json_destination, csv_destination)
+
+    return {
+        "status": "succeeded",
+        "scheme": annotation_payload["scheme"],
+        "chains": annotation_payload["chains"],
+        "abnumber_version": getattr(abnumber, "__version__", "unknown"),
+        "artifacts": {
+            "json": str(json_destination),
+            "csv": str(csv_destination),
+        },
+    }
+
+
+def _serialize_cdr_annotation(result: CDRAnnotationResult) -> Dict[str, Any]:
+    chains = []
+    for chain in result.chains:
+        chains.append(
+            {
+                "chain_id": chain.chain_id,
+                "sequence": chain.sequence,
+                "cdrs": chain.cdrs,
+                "numbering": chain.numbering,
+            }
+        )
+
+    return {
+        "scheme": result.scheme,
+        "chains": chains,
+    }
+
+
+def _write_cdr_outputs(payload: Mapping[str, Any], json_destination: Path, csv_destination: Path) -> None:
+    json_destination.write_text(json.dumps(payload, indent=2))
+
+    lines = ["chain_id,cdr_name,start,end,sequence"]
+    for chain in payload.get("chains", []):
+        for cdr in chain.get("cdrs", []):
+            lines.append(
+                f"{chain.get('chain_id','')},{cdr.get('name','')},{cdr.get('start','')},{cdr.get('end','')},{cdr.get('sequence','')}"
+            )
+    csv_destination.write_text("\n".join(lines) + "\n")
 
 
 def _write_mock_structure(destination: Path, mode: str) -> None:
