@@ -1,0 +1,5 @@
+HEADER    SAMPLE VHH STRUCTURE
+ATOM      1  N   GLY A   1      11.000  12.000  13.000  1.00 20.00           N
+ATOM      2  CA  GLY A   1      11.500  12.500  13.500  1.00 20.00           C
+TER
+END
