@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
+from types import SimpleNamespace
 
 from abnumber import Chain
 from Bio.PDB import MMCIFParser, PDBParser, PPBuilder
@@ -67,7 +68,7 @@ def annotate_cdrs(
     cdr_segments: List[Dict[str, Any]] = []
     numbering_labels: List[str] = []
     try:
-        chain = Chain(sequence, scheme=scheme, chain_type=chain_type)
+        chain = Chain(sequence, scheme=scheme)
 
         numbering_labels = [_position_label(pos) for pos in getattr(chain, "numbering", [])]
         cdr_segments = _collect_cdrs(chain)
@@ -170,7 +171,7 @@ def _collect_cdrs(chain: Any) -> List[Dict[str, Any]]:
         for name in ("cdr1", "cdr2", "cdr3"):
             seq_value = getattr(chain, f"{name}_seq", None)
             if seq_value:
-                cdr_map[name.upper()] = {"sequence": str(seq_value), "positions": []}
+                cdr_map[name.upper()] = SimpleNamespace(sequence=str(seq_value), positions=[])
 
     for name, region in cdr_map.items():
         region_seq = _extract_region_sequence(region)
