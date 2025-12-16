@@ -89,9 +89,8 @@ AbDesign 是一个用于抗体结构分析和设计的 Web 服务平台。该系
 - **tasks.py**: 后台任务定义
 - **queue.py**: Redis 队列管理
 
-#### 4. AbNumber 集成 (`abnumber/`)
-- 内置的 AbNumber 精简实现（可选）
-- 支持直接使用 PyPI 上的 abnumber 包
+#### 4. AbNumber 集成（上游 PyPI 包）
+- 直接依赖 PyPI 上游 `abnumber[anarci]`，提供完整 ANARCI 编号
 
 ## 安装和部署
 
@@ -284,10 +283,9 @@ AbDesign/
 │   ├── worker.py          # Worker 主程序
 │   ├── tasks.py           # 任务定义
 │   └── queue.py           # 队列管理
-├── abnumber/              # AbNumber 集成
-│   └── __init__.py
 ├── scripts/               # 工具脚本
-│   └── smoke_test.py      # 冒烟测试
+│   ├── smoke_test.py      # 冒烟测试
+│   └── verify_abnumber.py # 验证使用上游 AbNumber
 ├── samples/               # 示例文件
 │   ├── vhh_sample.pdb     # VHH 示例结构
 │   └── target_sample.pdb  # 靶标示例结构
@@ -306,10 +304,9 @@ AbDesign/
 | `uvicorn` | 0.32.0 | ASGI 服务器 |
 | `redis` | 5.2.1 | Redis 客户端 |
 | `rq` | 1.16.2 | 任务队列 |
-| `abnumber` | 2.2.1 | 抗体编号和 CDR 识别 |
-| `biopython` | 1.83 | 生物信息学工具 |
+| `abnumber[anarci]` | 0.3.1 | 抗体编号和 CDR 识别（含 ANARCI） |
+| `biopython` | 1.84 | 生物信息学工具 |
 | `gemmi` | 0.6.8 | 结构文件解析 |
-| `numpy` | 1.26.4 | 数值计算 |
 
 ## 开发特性
 

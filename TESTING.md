@@ -24,6 +24,10 @@ uv pip install -r requirements.txt
 
 安装完成后可运行一次快速校验，确保使用的是上游 AbNumber，并且编号能处理插入位点：
 ```bash
+# 验收脚本（检查 abnumber 源路径、版本、编号输出）
+python scripts/verify_abnumber.py
+
+# 或使用现有单元测试
 python -m unittest tests/test_abnumber_integration.py
 ```
 ```
@@ -55,6 +59,11 @@ python scripts/smoke_test.py --base-url http://localhost:8000
 ```bash
 python scripts/smoke_test.py --base-url http://localhost:8000 --api-key <YOUR_KEY>
 ```
+
+## 验收命令清单（从干净环境开始）
+1. 安装依赖：`python -m pip install -r requirements.txt`
+2. 运行 AbNumber 验收脚本：`python scripts/verify_abnumber.py`
+3. 启动服务并运行冒烟测试：`python scripts/smoke_test.py --base-url http://localhost:8000`
 
 ## 手动验证步骤（可选）
 - 通过 `curl` 查看健康检查：
