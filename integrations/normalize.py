@@ -77,20 +77,20 @@ def normalize_and_derive(
     # --- JSON-serializable artifacts only (paths and primitive-friendly payloads) ---
     artifacts: Dict[str, object] = {
         # standardized paths
-        "scaffold_standardized": str(scaffold_standardized.standardized_path),
+        "scaffold_standardized_path": str(scaffold_standardized.standardized_path),
         "scaffold_mapping_json": str(scaffold_mapping_path),
         # CDR artifacts (annotate_cdrs already wrote these files)
-        "scaffold_cdr_annotations": str(scaffold_cdr_json),
+        "scaffold_cdr_annotations_json": str(scaffold_cdr_json),
         "scaffold_cdr_mappings_json": str(cdr_mapping_path),
         # HLT / chain_map
         "scaffold_hlt_path": str(hlt_path) if hlt_path.exists() else None,
         "scaffold_chain_map_json": str(chain_map_path) if hlt_chain_map and chain_map_path.exists() else None,
         # boltzgen YAML (path or None)
-        "boltzgen_yaml": None,
+        "boltzgen_yaml_path": None,
         # target artifacts (populated below if target exists)
-        "target_standardized": None,
+        "target_standardized_path": None,
         "target_mapping_json": None,
-        "target_hotspots_resolved": None,
+        "target_hotspots_resolved_json": None,
     }
 
     # keep raw payloads when they are already JSON-friendly
@@ -110,8 +110,7 @@ def normalize_and_derive(
 
         artifacts.update(
             {
-                "target_standardized": str(target_standardized.standardized_path),
-                "target_mapping": target_mapping,
+                "target_standardized_path": str(target_standardized.standardized_path),
                 "target_mapping_json": str(target_mapping_path),
             }
         )
@@ -125,7 +124,7 @@ def normalize_and_derive(
             target_standardized.standardized_path if target_standardized else None,
             boltzgen_yaml_path,
         )
-        artifacts["boltzgen_yaml"] = str(boltz_yaml)
+        artifacts["boltzgen_yaml_path"] = str(boltz_yaml)
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("BoltzGen YAML generation failed: %s", exc)
 

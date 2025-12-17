@@ -25,13 +25,14 @@ from integrations.normalize import normalize_and_derive
 from integrations.rfantibody import run_rfantibody
 from pipeline.cdr import CDRArtifacts, annotate_cdrs
 from pipeline.epitope.mapping import (
+    MappingResidueV2,
     MappingResultV2,
     ResolveResultV2,
     build_residue_mapping_v2,
     resolve_hotspots_v2,
 )
-from pipeline.epitope.standardize import standardize_structure
-from pipeline.epitope.spec import normalize_target_hotspots
+from pipeline.epitope.standardize import StandardizedStructure, standardize_structure
+from pipeline.epitope.spec import ResidueRefAuth, normalize_target_hotspots
 
 LOGGER = logging.getLogger(__name__)
 
@@ -121,12 +122,12 @@ class PipelineArtifacts:
     summary_json: Path
     cdr_json: Optional[Path] = None
     cdr_csv: Optional[Path] = None
-    target_residue_mapping: Optional[Path] = None
-    target_hotspots_resolved: Optional[Path] = None
-    scaffold_standardized: Optional[Path] = None
-    target_standardized: Optional[Path] = None
-    scaffold_hlt: Optional[Path] = None
-    boltzgen_yaml: Optional[Path] = None
+    target_residue_mapping_path: Optional[Path] = None
+    target_hotspots_resolved_path: Optional[Path] = None
+    scaffold_standardized_path: Optional[Path] = None
+    target_standardized_path: Optional[Path] = None
+    scaffold_hlt_path: Optional[Path] = None
+    boltzgen_yaml_path: Optional[Path] = None
     rfantibody_outputs: Optional[Dict[str, Any]] = None
     boltzgen_outputs: Optional[Dict[str, Any]] = None
 
@@ -205,9 +206,9 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         )
         cdr_annotation = normalization.get("scaffold_cdr_payload") or normalization.get("scaffold_cdr_mapping_payload")
         cdr_mapping_payload = normalization.get("scaffold_cdr_mapping_payload")
-        cdr_json_path = Path(normalization.get("scaffold_cdr_annotations", cdr_json_path))
+        cdr_json_path = Path(normalization.get("scaffold_cdr_annotations_json", cdr_json_path))
         cdr_csv_path = cdr_json_path.with_suffix(".csv")
-        predicted_path = Path(normalization.get("scaffold_standardized", predicted_path))
+        predicted_path = Path(normalization.get("scaffold_standardized_path", predicted_path))
 
     if cdr_annotation is None:
         cdr_annotation = _maybe_annotate_cdrs(inputs, CDRArtifacts(cdr_json_path, cdr_csv_path))
@@ -215,8 +216,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
     hotspot_payload = _maybe_process_hotspots(
         inputs,
         config.output_dir,
-        mapping_override=normalization.get("target_mapping") if normalization else None,
-        standardized_override=normalization.get("target_standardized") if normalization else None,
+        mapping_override=normalization.get("target_mapping_json") if normalization else None,
+        standardized_override=normalization.get("target_standardized_path") if normalization else None,
     )
 
     rfantibody_output: Optional[Dict[str, Any]] = None
@@ -227,7 +228,7 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         rfantibody_output = run_rfantibody(
             config.output_dir,
             normalization.get("scaffold_hlt_path"),
-            normalization.get("target_standardized") or target_path,
+            normalization.get("target_standardized_path") or target_path,
             hotspots_resolved=(hotspot_payload or {}).get("resolved_summary"),
             design_loops=design_loops,
             num_designs=config.integration.rfantibody.num_designs,
@@ -239,10 +240,10 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         if rfantibody_output.get("design_pdbs"):
             predicted_path = Path(rfantibody_output["design_pdbs"][0])
 
-    if normalization and normalization.get("boltzgen_yaml") and config.integration.boltzgen.enabled:
+    if normalization and normalization.get("boltzgen_yaml_path") and config.integration.boltzgen.enabled:
         boltzgen_output = run_boltzgen(
             config.output_dir,
-            normalization.get("boltzgen_yaml"),
+            normalization.get("boltzgen_yaml_path"),
             protocol=config.integration.boltzgen.protocol,
             num_designs=config.integration.boltzgen.num_designs,
             mapping=normalization.get("scaffold_mapping_json"),
@@ -280,8 +281,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
             "boltzgen": boltzgen_output,
         },
         "artifacts": {
-            "target_residue_mapping": str(hotspot_payload.get("mapping_path")) if hotspot_payload else None,
-            "target_hotspots_resolved": str(hotspot_payload.get("resolved_path")) if hotspot_payload else None,
+            "target_residue_mapping_path": str(hotspot_payload.get("mapping_path")) if hotspot_payload else None,
+            "target_hotspots_resolved_path": str(hotspot_payload.get("resolved_path")) if hotspot_payload else None,
         },
     }
     summary_path.write_text(json.dumps(summary_payload, indent=2))
@@ -293,19 +294,19 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         summary_json=summary_path,
         cdr_json=cdr_json_path if cdr_annotation else None,
         cdr_csv=cdr_csv_path if cdr_annotation else None,
-        target_residue_mapping=hotspot_payload.get("mapping_path") if hotspot_payload else None,
-        target_hotspots_resolved=hotspot_payload.get("resolved_path") if hotspot_payload else None,
-        scaffold_standardized=Path(normalization.get("scaffold_standardized"))
-        if normalization and normalization.get("scaffold_standardized")
+        target_residue_mapping_path=hotspot_payload.get("mapping_path") if hotspot_payload else None,
+        target_hotspots_resolved_path=hotspot_payload.get("resolved_path") if hotspot_payload else None,
+        scaffold_standardized_path=Path(normalization.get("scaffold_standardized_path"))
+        if normalization and normalization.get("scaffold_standardized_path")
         else None,
-        target_standardized=Path(normalization.get("target_standardized"))
-        if normalization and normalization.get("target_standardized")
+        target_standardized_path=Path(normalization.get("target_standardized_path"))
+        if normalization and normalization.get("target_standardized_path")
         else None,
-        scaffold_hlt=Path(normalization.get("scaffold_hlt_path"))
+        scaffold_hlt_path=Path(normalization.get("scaffold_hlt_path"))
         if normalization and normalization.get("scaffold_hlt_path")
         else None,
-        boltzgen_yaml=Path(normalization.get("boltzgen_yaml"))
-        if normalization and normalization.get("boltzgen_yaml")
+        boltzgen_yaml_path=Path(normalization.get("boltzgen_yaml_path"))
+        if normalization and normalization.get("boltzgen_yaml_path")
         else None,
         rfantibody_outputs=rfantibody_output,
         boltzgen_outputs=boltzgen_output,
@@ -410,7 +411,7 @@ def _maybe_process_hotspots(
     inputs: Mapping[str, Any],
     output_dir: Path,
     *,
-    mapping_override: MappingResultV2 | None = None,
+    mapping_override: MappingResultV2 | str | Path | dict | None = None,
     standardized_override: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     user_params = inputs.get("user_params") or {}
@@ -423,7 +424,7 @@ def _maybe_process_hotspots(
     scope = user_params.get("hotspot_residue_scope", "protein")
 
     if mapping_override:
-        mapping_result_v2 = mapping_override
+        mapping_result_v2 = _load_mapping_result(mapping_override)
         mapping_path = output_dir / "target_residue_mapping.json"
         mapping_result_v2.write_json(mapping_path)
     else:
@@ -459,6 +460,67 @@ def _maybe_process_hotspots(
     }
 
 
+def _load_mapping_result(mapping: MappingResultV2 | str | Path | dict) -> MappingResultV2:
+    if isinstance(mapping, MappingResultV2):
+        return mapping
+    if isinstance(mapping, (str, Path)):
+        mapping_dict = json.loads(Path(mapping).read_text())
+    elif isinstance(mapping, dict):
+        mapping_dict = mapping
+    else:  # pragma: no cover - defensive fallback
+        raise ValueError("Unsupported mapping type for hotspots processing")
+
+    return _mapping_result_from_dict(mapping_dict)
+
+
+def _mapping_result_from_dict(mapping_dict: Mapping[str, Any]) -> MappingResultV2:
+    source = mapping_dict.get("source_structure", {})
+    chains_payload = mapping_dict.get("chains", [])
+
+    chain_map: Dict[str, str] = {}
+    for chain_entry in chains_payload:
+        auth_chain = chain_entry.get("auth_chain_id") or chain_entry.get("auth_chain")
+        label_asym = chain_entry.get("label_asym_id") or (chain_entry.get("mmcif_label") or {}).get("label_asym_id")
+        if auth_chain and label_asym:
+            chain_map[auth_chain] = label_asym
+
+    standardized = StandardizedStructure(
+        input_path=Path(source.get("input_path", "")),
+        input_format=source.get("input_format", ""),
+        standardized_path=Path(source.get("standardized_path", "")),
+        chain_id_map=chain_map or source.get("chain_id_map", {}),
+    )
+
+    residues: list[MappingResidueV2] = []
+    for chain_entry in chains_payload:
+        auth_chain = chain_entry.get("auth_chain_id") or chain_entry.get("auth_chain") or ""
+        label_asym = chain_entry.get("label_asym_id") or (chain_entry.get("mmcif_label") or {}).get("label_asym_id")
+        label_asym = label_asym or chain_map.get(auth_chain) or auth_chain
+
+        for residue in chain_entry.get("residues", []):
+            auth = residue.get("auth", {})
+            mmcif_label = residue.get("mmcif_label", {})
+
+            residues.append(
+                MappingResidueV2(
+                    auth=ResidueRefAuth(
+                        chain=auth.get("chain") or auth_chain,
+                        resi=int(auth.get("resi") or auth.get("seq_id") or 0),
+                        ins=str(auth.get("ins") or auth.get("insertion") or ""),
+                    ),
+                    present_seq_id=int(residue.get("present_seq_id") or 0),
+                    label_asym_id=mmcif_label.get("label_asym_id") or label_asym,
+                    label_seq_id=int(mmcif_label.get("label_seq_id") or 0),
+                    resname3=residue.get("resname3") or residue.get("resname") or "",
+                    category=residue.get("entity_type") or residue.get("category") or "unknown",
+                )
+            )
+
+    generated_at = mapping_dict.get("generated_at") or mapping_dict.get("generatedAt") or ""
+
+    return MappingResultV2(residues=residues, standardized=standardized, generated_at=str(generated_at))
+
+
 def _design_loops_from_cdr(cdr_payload: Optional[Mapping[str, Any]]) -> list[Dict[str, int | str]]:
     """Extract mapped loops from normalized CDR payload."""
 
@@ -483,15 +545,16 @@ def _summarize_normalization(normalization: Optional[Dict[str, Any]]) -> Optiona
         return None
 
     fields = [
-        "scaffold_standardized",
+        "scaffold_standardized_path",
         "scaffold_mapping_json",
-        "scaffold_cdr_annotations",
+        "scaffold_cdr_annotations_json",
         "scaffold_cdr_mappings_json",
         "scaffold_hlt_path",
         "scaffold_chain_map_json",
-        "boltzgen_yaml",
-        "target_standardized",
+        "boltzgen_yaml_path",
+        "target_standardized_path",
         "target_mapping_json",
+        "target_hotspots_resolved_json",
     ]
     summary: Dict[str, Any] = {}
     for key in fields:
