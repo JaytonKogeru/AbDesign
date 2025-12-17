@@ -147,7 +147,7 @@ class PipelineResult:
     target_mapping_file: Optional[Path]
     normalization: Optional[Dict[str, Any]] = None
     integration_outputs: Optional[Dict[str, Any]] = None
-    config: Dict[str, Any]
+    config: Dict[str, Any] = field(default_factory=dict)
 
 
 def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
@@ -245,7 +245,7 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
             normalization.get("boltzgen_yaml"),
             protocol=config.integration.boltzgen.protocol,
             num_designs=config.integration.boltzgen.num_designs,
-            mapping=normalization.get("scaffold_mapping"),
+            mapping=normalization.get("scaffold_mapping_json"),
             use_docker=config.integration.boltzgen.use_docker,
             docker_image=config.integration.boltzgen.docker_image,
             timeout=config.integration.boltzgen.timeout,
@@ -459,20 +459,22 @@ def _maybe_process_hotspots(
     }
 
 
-def _design_loops_from_cdr(cdr_payload: Optional[Mapping[str, Any]]) -> list[str]:
-    loops: list[str] = []
+def _design_loops_from_cdr(cdr_payload: Optional[Mapping[str, Any]]) -> list[Dict[str, int | str]]:
+    """Extract mapped loops from normalized CDR payload."""
+
+    loops: list[Dict[str, int | str]] = []
     if not cdr_payload or cdr_payload.get("status") != "succeeded":
         return loops
 
     for cdr in cdr_payload.get("cdr_mappings", []):
         if cdr.get("status") != "mapped":
             continue
-        start = cdr.get("label_seq_id_start")
-        end = cdr.get("label_seq_id_end")
+        start = cdr.get("label_seq_id_start") or cdr.get("start")
+        end = cdr.get("label_seq_id_end") or cdr.get("end")
         if start is None or end is None:
             continue
         name = cdr.get("cdr_name") or cdr.get("name") or "loop"
-        loops.append(f"{name}:{start}-{end}")
+        loops.append({"cdr_name": name, "label_seq_id_start": int(start), "label_seq_id_end": int(end)})
     return loops
 
 

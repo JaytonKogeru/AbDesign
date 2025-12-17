@@ -74,22 +74,32 @@ def normalize_and_derive(
         LOGGER.warning("HLT generation failed: %s", exc)
         hlt_chain_map = None
 
+    # --- JSON-serializable artifacts only (paths and primitive-friendly payloads) ---
     artifacts: Dict[str, object] = {
+        # standardized paths
         "scaffold_standardized": str(scaffold_standardized.standardized_path),
-        "scaffold_mapping": scaffold_mapping,
         "scaffold_mapping_json": str(scaffold_mapping_path),
+        # CDR artifacts (annotate_cdrs already wrote these files)
         "scaffold_cdr_annotations": str(scaffold_cdr_json),
         "scaffold_cdr_mappings_json": str(cdr_mapping_path),
-        "scaffold_cdr_payload": cdr_payload,
-        "scaffold_cdr_mapping_payload": cdr_mapping_payload,
+        # HLT / chain_map
         "scaffold_hlt_path": str(hlt_path) if hlt_path.exists() else None,
         "scaffold_chain_map_json": str(chain_map_path) if hlt_chain_map and chain_map_path.exists() else None,
+        # boltzgen YAML (path or None)
         "boltzgen_yaml": None,
+        # target artifacts (populated below if target exists)
         "target_standardized": None,
-        "target_mapping": None,
         "target_mapping_json": None,
         "target_hotspots_resolved": None,
     }
+
+    # keep raw payloads when they are already JSON-friendly
+    artifacts.update(
+        {
+            "scaffold_cdr_payload": cdr_payload,
+            "scaffold_cdr_mapping_payload": cdr_mapping_payload,
+        }
+    )
 
     target_standardized = None
     if target_path:
@@ -187,15 +197,26 @@ def _map_segment_to_chain(
             "cdr_sequence": sequence,
         }
 
-    start_idx = _locate_subsequence(chain_sequence, sequence)
-    if start_idx is None:
+    locate = _locate_subsequence(chain_sequence, sequence)
+    if not locate:
         return {
             "cdr_name": name,
             "status": "failed",
             "reason": "cdr sequence could not be aligned to scaffold chain",
             "cdr_sequence": sequence,
         }
+    if locate.get("ambiguous"):
+        return {
+            "cdr_name": name,
+            "status": "failed",
+            "reason": "ambiguous alignment of CDR sequence to scaffold chain",
+            "cdr_sequence": sequence,
+            "alignment_score": locate.get("score"),
+            "ambiguous": True,
+        }
 
+    start_idx = int(locate["start"])
+    alignment_score = float(locate["score"])
     end_idx = start_idx + len(sequence) - 1
     if end_idx >= len(residues):
         return {
@@ -216,24 +237,55 @@ def _map_segment_to_chain(
         "absolute_start": start_res.present_seq_id,
         "absolute_end": end_res.present_seq_id,
         "status": "mapped",
+        "alignment_score": alignment_score,
+        "ambiguous": False,
     }
 
 
-def _locate_subsequence(chain_sequence: str, query: str) -> Optional[int]:
+def _locate_subsequence(chain_sequence: str, query: str) -> Optional[Dict[str, object]]:
+    """
+    Locate best matching location of query in chain_sequence.
+
+    Returns dict {"start": int, "score": float, "ambiguous": bool} or None when not found/low confidence.
+    """
     if not chain_sequence:
         return None
 
+    # if biopython present, use local alignment with a normalized score threshold
     if pairwise2:
         try:
+            # use match=2, mismatch=-1, open=-5, extend=-0.5 (same as before)
             alignments = pairwise2.align.localms(chain_sequence, query, 2, -1, -5, -0.5)  # type: ignore[arg-type]
-            if alignments:
-                best = max(alignments, key=lambda aln: aln[2])
-                return best[3]
-        except Exception as exc:  # noqa: BLE001
+            if not alignments:
+                return None
+            # compute normalized scores and detect ambiguity
+            scored = []
+            for aln in alignments:
+                score = aln[2]
+                start = aln[3]  # start index on chain_sequence
+                norm = float(score) / float(max(len(query), 1))
+                scored.append((norm, score, start))
+            scored.sort(reverse=True, key=lambda x: x[0])  # sort by normalized score
+            best_norm, best_score, best_start = scored[0]
+            # ambiguity detection: if next best is very close to best
+            ambiguous = False
+            if len(scored) > 1:
+                next_norm = scored[1][0]
+                if (best_norm - next_norm) / max(best_norm, 1e-9) < 0.05:
+                    ambiguous = True
+            # threshold: require normalized score >= 1.5 (tunable)
+            MIN_NORMALIZED_SCORE = 1.5
+            if best_norm < MIN_NORMALIZED_SCORE:
+                return None
+            return {"start": int(best_start), "score": float(best_norm), "ambiguous": ambiguous}
+        except Exception as exc:  # pragma: no cover - fallback
             LOGGER.warning("pairwise2 alignment failed; falling back to substring search: %s", exc)
 
+    # fallback: strict substring find
     idx = chain_sequence.find(query)
-    return idx if idx >= 0 else None
+    if idx >= 0:
+        return {"start": idx, "score": float(len(query)), "ambiguous": False}
+    return None
 
 
 def generate_hlt(
@@ -442,3 +494,54 @@ def _inject_remarks(output_hlt_path: Path, remark_lines: List[str]) -> None:
         updated = remark_lines
 
     output_hlt_path.write_text("\n".join(updated) + "\n")
+    validation = _validate_remarks(output_hlt_path, remark_lines)
+    validation_path = output_hlt_path.with_suffix(".remark_validation.json")
+    validation_path.write_text(json.dumps(validation, indent=2))
+    if not validation.get("ok", False):
+        raise RuntimeError(
+            f"Remark validation failed for {output_hlt_path}; details written to {validation_path}"
+        )
+
+
+def _validate_remarks(output_hlt_path: Path, remark_lines: List[str]) -> Dict[str, object]:
+    """Validate that remark absolute indices line up with residues in the HLT PDB."""
+
+    gemmi = _require_gemmi()
+    structure = gemmi.read_pdb(str(output_hlt_path))
+    absolute_map: Dict[int, Dict[str, object]] = {}
+
+    abs_idx = 1
+    for model in structure:
+        for chain in model:
+            for residue in chain:
+                absolute_map[abs_idx] = {
+                    "chain": chain.name.strip(),
+                    "auth_res": int(residue.seqid.num),
+                    "ins": residue.seqid.get_insertion_code() or "",
+                    "resname": residue.name,
+                }
+                abs_idx += 1
+        break
+
+    details: List[Dict[str, object]] = []
+    ok = True
+    for line in remark_lines:
+        tokens = line.strip().split()
+        index_token = None
+        for token in reversed(tokens):
+            if token.isdigit():
+                index_token = token
+                break
+        if index_token is None:
+            details.append({"line": line, "ok": False, "reason": "could_not_parse"})
+            ok = False
+            continue
+        idx = int(index_token)
+        residue = absolute_map.get(idx)
+        if residue is None:
+            details.append({"line": line, "ok": False, "reason": "index_out_of_range", "index": idx})
+            ok = False
+            continue
+        details.append({"line": line, "ok": True, "index": idx, "residue": residue})
+
+    return {"ok": ok, "details": details}
