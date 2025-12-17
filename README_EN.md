@@ -298,7 +298,6 @@ AbDesign/
 ├── samples/               # Sample files
 │   ├── vhh_sample.pdb     # VHH sample structure
 │   └── target_sample.pdb  # Target sample structure
-├── third_party/           # Third-party libraries (unused)
 ├── requirements.txt       # Python dependencies
 ├── start_uvicorn.sh       # Startup script
 ├── TESTING.md            # Testing guide

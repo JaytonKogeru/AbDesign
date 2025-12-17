@@ -39,6 +39,11 @@ python -m worker.worker
 python scripts/smoke_test.py
 ```
 
+### 依赖管理
+
+- 目前仓库没有 `third_party/` 目录下的 vendored 代码，依赖全部通过 PyPI 安装（见 `requirements.txt`）。
+- 如未来确需引入 vendored 第三方库，请新建子目录时同步更新打包/部署忽略规则（如容器构建上下文、发行包清单），避免无意分发体积较大的依赖。
+
 ### 常用开发命令
 
 #### 测试 API
@@ -455,6 +460,11 @@ python -m worker.worker
 # 4. Test
 python scripts/smoke_test.py
 ```
+
+### Dependency Management
+
+- There is no vendored code under `third_party/`; all dependencies come from PyPI (see `requirements.txt`).
+- If you ever need to vendor a third-party library, add it under a new subdirectory and update packaging/deployment ignore rules (e.g., container build context, release manifests) so large dependencies are not shipped unintentionally.
 
 ### Common Development Commands
 
