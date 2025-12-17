@@ -22,12 +22,16 @@ def _assert_mapping_fields(mapping_path: Path) -> int:
     if payload.get("mapping_schema_version") != 2:
         raise SystemExit("mapping_schema_version must be 2")
 
+    id_schemes = payload.get("id_schemes") or {}
+    if id_schemes.get("canonical") != "present_seq_id" or id_schemes.get("mmcif_label") != "label_seq_id":
+        raise SystemExit("id_schemes must include canonical=present_seq_id and mmcif_label=label_seq_id")
+
     residues = [res for chain in payload.get("chains", []) for res in chain.get("residues", [])]
     if not residues:
-        raise SystemExit("no residues found in mapping_v2 output")
+        raise SystemExit("no residues found in mapping output")
     for res in residues:
         if "present_seq_id" not in res or "mmcif_label" not in res:
-            raise SystemExit("present_seq_id or mmcif_label missing from mapping_v2")
+            raise SystemExit("present_seq_id or mmcif_label missing from mapping output")
     return len(residues)
 
 
@@ -59,11 +63,11 @@ def main() -> None:
         out_dir = Path(tmpdir)
         standardized = standardize_structure(structure_path, out_dir)
         mapping = build_residue_mapping_v2(standardized)
-        mapping_path = out_dir / "target_residue_mapping_v2.json"
+        mapping_path = out_dir / "target_residue_mapping.json"
         mapping.write_json(mapping_path)
 
         resolved = resolve_hotspots_v2(hotspots, mapping)
-        resolved_path = out_dir / "target_hotspots_resolved_v2.json"
+        resolved_path = out_dir / "target_hotspots_resolved.json"
         resolved.write_json(resolved_path)
 
         residue_count = _assert_mapping_fields(mapping_path)

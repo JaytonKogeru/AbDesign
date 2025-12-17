@@ -255,8 +255,6 @@ async def download_artifact(task_id: str, artifact: str) -> FileResponse:
         "cdr_csv": metadata.get("cdr_csv"),
         "target_residue_mapping": metadata.get("target_residue_mapping"),
         "target_hotspots_resolved": metadata.get("target_hotspots_resolved"),
-        "target_residue_mapping_v2": metadata.get("target_residue_mapping_v2"),
-        "target_hotspots_resolved_v2": metadata.get("target_hotspots_resolved_v2"),
     }
 
     selected_path = allowed_paths.get(artifact)
@@ -275,8 +273,6 @@ async def download_artifact(task_id: str, artifact: str) -> FileResponse:
         "cdr_json": "application/json",
         "target_residue_mapping": "application/json",
         "target_hotspots_resolved": "application/json",
-        "target_residue_mapping_v2": "application/json",
-        "target_hotspots_resolved_v2": "application/json",
     }
 
     media_type = media_types.get(artifact)

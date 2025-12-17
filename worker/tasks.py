@@ -53,12 +53,6 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 "target_mapping_file": str(pipeline_result.target_mapping_file)
                 if pipeline_result.target_mapping_file
                 else None,
-                "target_hotspots_resolved_v2": pipeline_result.target_hotspots_resolved_v2.to_dict()
-                if pipeline_result.target_hotspots_resolved_v2
-                else None,
-                "target_mapping_file_v2": str(pipeline_result.target_mapping_file_v2)
-                if pipeline_result.target_mapping_file_v2
-                else None,
                 "config": pipeline_result.config,
             },
             "artifacts": {
@@ -73,12 +67,6 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 else None,
                 "target_hotspots_resolved": str(pipeline_result.artifacts.target_hotspots_resolved)
                 if pipeline_result.artifacts.target_hotspots_resolved
-                else None,
-                "target_residue_mapping_v2": str(pipeline_result.artifacts.target_residue_mapping_v2)
-                if pipeline_result.artifacts.target_residue_mapping_v2
-                else None,
-                "target_hotspots_resolved_v2": str(pipeline_result.artifacts.target_hotspots_resolved_v2)
-                if pipeline_result.artifacts.target_hotspots_resolved_v2
                 else None,
             },
             "cdr_summary": cdr_summary,
@@ -109,12 +97,6 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 "target_hotspots_resolved": str(pipeline_result.artifacts.target_hotspots_resolved)
                 if pipeline_result.artifacts.target_hotspots_resolved
                 else None,
-                "target_residue_mapping_v2": str(pipeline_result.artifacts.target_residue_mapping_v2)
-                if pipeline_result.artifacts.target_residue_mapping_v2
-                else None,
-                "target_hotspots_resolved_v2": str(pipeline_result.artifacts.target_hotspots_resolved_v2)
-                if pipeline_result.artifacts.target_hotspots_resolved_v2
-                else None,
             },
         )
         logger.info("Task %s completed with score %.2f", task_id, pipeline_result.summary_score)
@@ -133,12 +115,6 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             else None,
             "target_hotspots_resolved": str(pipeline_result.artifacts.target_hotspots_resolved)
             if pipeline_result.artifacts.target_hotspots_resolved
-            else None,
-            "target_residue_mapping_v2": str(pipeline_result.artifacts.target_residue_mapping_v2)
-            if pipeline_result.artifacts.target_residue_mapping_v2
-            else None,
-            "target_hotspots_resolved_v2": str(pipeline_result.artifacts.target_hotspots_resolved_v2)
-            if pipeline_result.artifacts.target_hotspots_resolved_v2
             else None,
         }
     except Exception as exc:  # noqa: BLE001

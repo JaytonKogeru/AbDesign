@@ -1,9 +1,9 @@
 """Export helpers for hotspot interoperability."""
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Mapping, Sequence
+from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
-from pipeline.epitope.mapping import ResolvedHotspot
+from pipeline.epitope.mapping import ResolvedHotspotV2
 from pipeline.epitope.spec import ResidueRefAuth, ResidueRefCanonical
 
 
@@ -23,13 +23,28 @@ def export_rfantibody_hotspots(auth_hotspots: Sequence[ResidueRefAuth], chain_ma
     return f"ppi.hotspot_res=[{','.join(tokens)}]"
 
 
-def export_boltzgen_binding(resolved_canonical_hotspots: Iterable[ResidueRefCanonical | ResolvedHotspot]) -> Dict[str, List[Dict[str, Dict[str, str]]]]:
-    """Convert canonical hotspots into BoltzGen binding dictionary."""
+def _extract_canonical_id(hotspot: ResidueRefCanonical | ResolvedHotspotV2 | Mapping[str, object]) -> Tuple[str, int]:
+    if isinstance(hotspot, ResolvedHotspotV2):
+        chain = str(hotspot.present_seq_id.get("chain"))
+        seq_id = int(hotspot.present_seq_id.get("seq_id"))
+        return chain, seq_id
+
+    if isinstance(hotspot, ResidueRefCanonical):
+        return hotspot.chain, int(hotspot.seq_id)
+
+    present = hotspot.get("present_seq_id", {}) if isinstance(hotspot, Mapping) else {}
+    return str(present.get("chain")), int(present.get("seq_id"))
+
+
+def export_boltzgen_binding(
+    resolved_canonical_hotspots: Iterable[ResidueRefCanonical | ResolvedHotspotV2 | Mapping[str, object]]
+) -> Dict[str, List[Dict[str, Dict[str, str]]]]:
+    """Convert canonical hotspots into BoltzGen binding dictionary using present_seq_id numbering."""
 
     per_chain: Dict[str, List[int]] = {}
     for hotspot in resolved_canonical_hotspots:
-        canonical_ref = hotspot.canonical if isinstance(hotspot, ResolvedHotspot) else hotspot
-        per_chain.setdefault(canonical_ref.chain, []).append(int(canonical_ref.seq_id))
+        chain, seq_id = _extract_canonical_id(hotspot)
+        per_chain.setdefault(chain, []).append(seq_id)
 
     binding_types = []
     for chain, seq_ids in per_chain.items():

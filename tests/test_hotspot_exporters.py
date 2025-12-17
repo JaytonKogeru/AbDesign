@@ -1,8 +1,8 @@
 import unittest
 
 from pipeline.epitope.exporters import export_boltzgen_binding, export_rfantibody_hotspots
-from pipeline.epitope.mapping import ResolvedHotspot
-from pipeline.epitope.spec import ResidueRefAuth, ResidueRefCanonical
+from pipeline.epitope.mapping import ResolvedHotspotV2
+from pipeline.epitope.spec import ResidueRefAuth
 
 
 class TestHotspotExporters(unittest.TestCase):
@@ -13,9 +13,21 @@ class TestHotspotExporters(unittest.TestCase):
 
     def test_export_boltzgen_binding_from_resolved(self) -> None:
         resolved = [
-            ResolvedHotspot(auth=ResidueRefAuth(chain="A", resi=54), canonical=ResidueRefCanonical(chain="A", seq_id=1)),
-            ResolvedHotspot(auth=ResidueRefAuth(chain="A", resi=55), canonical=ResidueRefCanonical(chain="A", seq_id=3)),
-            ResolvedHotspot(auth=ResidueRefAuth(chain="B", resi=10), canonical=ResidueRefCanonical(chain="B", seq_id=2)),
+            ResolvedHotspotV2(
+                auth=ResidueRefAuth(chain="A", resi=54),
+                present_seq_id={"chain": "A", "seq_id": 1},
+                mmcif_label={"label_asym_id": "A", "label_seq_id": 54},
+            ),
+            ResolvedHotspotV2(
+                auth=ResidueRefAuth(chain="A", resi=55),
+                present_seq_id={"chain": "A", "seq_id": 3},
+                mmcif_label={"label_asym_id": "A", "label_seq_id": 55},
+            ),
+            ResolvedHotspotV2(
+                auth=ResidueRefAuth(chain="B", resi=10),
+                present_seq_id={"chain": "B", "seq_id": 2},
+                mmcif_label={"label_asym_id": "B", "label_seq_id": 10},
+            ),
         ]
         output = export_boltzgen_binding(resolved)
         self.assertEqual(
