@@ -62,11 +62,23 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 "summary_json": str(summary_path),
                 "cdr_json": str(pipeline_result.artifacts.cdr_json) if pipeline_result.artifacts.cdr_json else None,
                 "cdr_csv": str(pipeline_result.artifacts.cdr_csv) if pipeline_result.artifacts.cdr_csv else None,
-                "target_residue_mapping": str(pipeline_result.artifacts.target_residue_mapping)
-                if pipeline_result.artifacts.target_residue_mapping
+                "target_residue_mapping_path": str(pipeline_result.artifacts.target_residue_mapping_path)
+                if pipeline_result.artifacts.target_residue_mapping_path
                 else None,
-                "target_hotspots_resolved": str(pipeline_result.artifacts.target_hotspots_resolved)
-                if pipeline_result.artifacts.target_hotspots_resolved
+                "target_hotspots_resolved_path": str(pipeline_result.artifacts.target_hotspots_resolved_path)
+                if pipeline_result.artifacts.target_hotspots_resolved_path
+                else None,
+                "scaffold_standardized_path": str(pipeline_result.artifacts.scaffold_standardized_path)
+                if pipeline_result.artifacts.scaffold_standardized_path
+                else None,
+                "target_standardized_path": str(pipeline_result.artifacts.target_standardized_path)
+                if pipeline_result.artifacts.target_standardized_path
+                else None,
+                "scaffold_hlt_path": str(pipeline_result.artifacts.scaffold_hlt_path)
+                if pipeline_result.artifacts.scaffold_hlt_path
+                else None,
+                "boltzgen_yaml_path": str(pipeline_result.artifacts.boltzgen_yaml_path)
+                if pipeline_result.artifacts.boltzgen_yaml_path
                 else None,
             },
             "cdr_summary": cdr_summary,
@@ -91,11 +103,23 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 "pipeline": summary_payload["pipeline"],
                 "numbering_scheme": pipeline_result.numbering_scheme,
                 "cdr_summary": cdr_summary,
-                "target_residue_mapping": str(pipeline_result.artifacts.target_residue_mapping)
-                if pipeline_result.artifacts.target_residue_mapping
+                "target_residue_mapping_path": str(pipeline_result.artifacts.target_residue_mapping_path)
+                if pipeline_result.artifacts.target_residue_mapping_path
                 else None,
-                "target_hotspots_resolved": str(pipeline_result.artifacts.target_hotspots_resolved)
-                if pipeline_result.artifacts.target_hotspots_resolved
+                "target_hotspots_resolved_path": str(pipeline_result.artifacts.target_hotspots_resolved_path)
+                if pipeline_result.artifacts.target_hotspots_resolved_path
+                else None,
+                "scaffold_standardized_path": str(pipeline_result.artifacts.scaffold_standardized_path)
+                if pipeline_result.artifacts.scaffold_standardized_path
+                else None,
+                "target_standardized_path": str(pipeline_result.artifacts.target_standardized_path)
+                if pipeline_result.artifacts.target_standardized_path
+                else None,
+                "scaffold_hlt_path": str(pipeline_result.artifacts.scaffold_hlt_path)
+                if pipeline_result.artifacts.scaffold_hlt_path
+                else None,
+                "boltzgen_yaml_path": str(pipeline_result.artifacts.boltzgen_yaml_path)
+                if pipeline_result.artifacts.boltzgen_yaml_path
                 else None,
             },
         )
@@ -110,11 +134,23 @@ def run_pipeline(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             "summary_score": pipeline_result.summary_score,
             "cdr_json": str(pipeline_result.artifacts.cdr_json) if pipeline_result.artifacts.cdr_json else None,
             "cdr_csv": str(pipeline_result.artifacts.cdr_csv) if pipeline_result.artifacts.cdr_csv else None,
-            "target_residue_mapping": str(pipeline_result.artifacts.target_residue_mapping)
-            if pipeline_result.artifacts.target_residue_mapping
+            "target_residue_mapping_path": str(pipeline_result.artifacts.target_residue_mapping_path)
+            if pipeline_result.artifacts.target_residue_mapping_path
             else None,
-            "target_hotspots_resolved": str(pipeline_result.artifacts.target_hotspots_resolved)
-            if pipeline_result.artifacts.target_hotspots_resolved
+            "target_hotspots_resolved_path": str(pipeline_result.artifacts.target_hotspots_resolved_path)
+            if pipeline_result.artifacts.target_hotspots_resolved_path
+            else None,
+            "scaffold_standardized_path": str(pipeline_result.artifacts.scaffold_standardized_path)
+            if pipeline_result.artifacts.scaffold_standardized_path
+            else None,
+            "target_standardized_path": str(pipeline_result.artifacts.target_standardized_path)
+            if pipeline_result.artifacts.target_standardized_path
+            else None,
+            "scaffold_hlt_path": str(pipeline_result.artifacts.scaffold_hlt_path)
+            if pipeline_result.artifacts.scaffold_hlt_path
+            else None,
+            "boltzgen_yaml_path": str(pipeline_result.artifacts.boltzgen_yaml_path)
+            if pipeline_result.artifacts.boltzgen_yaml_path
             else None,
         }
     except Exception as exc:  # noqa: BLE001

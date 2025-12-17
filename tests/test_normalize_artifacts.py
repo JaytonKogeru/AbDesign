@@ -93,8 +93,7 @@ def test_normalize_and_derive_artifacts_are_jsonable(tmp_path):
 
     assert isinstance(artifacts["scaffold_mapping_json"], str)
     assert Path(artifacts["scaffold_mapping_json"]).exists()
-    assert isinstance(artifacts["scaffold_cdr_annotations"], str)
-    assert Path(artifacts["scaffold_cdr_annotations"]).exists()
+    assert isinstance(artifacts["scaffold_cdr_annotations_json"], str)
+    assert Path(artifacts["scaffold_cdr_annotations_json"]).exists()
 
-    for value in artifacts.values():
-        assert isinstance(value, (str, type(None), dict, list, int, float, bool))
+    json.dumps(artifacts)
