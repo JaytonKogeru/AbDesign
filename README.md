@@ -26,17 +26,30 @@ AbDesign 是一个用于抗体结构分析和设计的 Web 服务平台。该系
 - 基于 [AbNumber](https://github.com/prihoda/abnumber) 库进行精确编号
 - 输出 JSON 和 CSV 格式的标注结果
 
-### 2. 结构分析
+### 2. 结构分析与标准化
 - 支持 PDB 和 mmCIF 格式的结构文件
 - 两种提交模式：
   - **separate 模式**：分别上传 VHH 和靶标结构
   - **complex 模式**：上传复合物结构
 - 自动提取序列和链信息
+- 结构标准化处理，生成规范化的 mmCIF 格式
+- 残基映射功能，支持 auth 和 label 标识符转换
 
-### 3. 异步任务处理
+### 3. 表位/热点(Hotspot)处理
+- 支持用户指定靶标热点残基（通过 `target_hotspots` 参数）
+- 热点残基解析和标准化
+- 生成残基映射文件（v2 schema）
+- 导出多种格式的热点标注（REMARK, HLT, JSON）
+
+### 4. 异步任务处理
 - 基于 Redis 和 RQ（Redis Queue）的任务队列系统
 - 支持长时间运行的计算任务
 - 实时任务状态查询
+
+### 5. 外部工具集成（可选）
+- **RFantibody 集成**：支持 RFdiffusion 驱动的抗体设计
+- **BoltzGen 集成**：支持基于 Boltz-1 的结构预测
+- 灵活的配置选项和 Docker 容器化支持
 
 ## 技术架构
 
@@ -82,9 +95,15 @@ AbDesign 是一个用于抗体结构分析和设计的 Web 服务平台。该系
   - 结合位点预测（预留接口）
   - 打分模型（模拟实现）
   - CDR 标注（完整实现）
+  - 外部工具集成（RFantibody、BoltzGen）
 - **cdr.py**: CDR 标注核心逻辑
   - 使用 gemmi 解析结构文件
   - 使用 abnumber 进行 CDR 识别
+- **epitope/**: 表位和热点处理模块
+  - **standardize.py**: 结构标准化，生成规范 mmCIF
+  - **mapping.py**: 残基映射和热点解析
+  - **exporters.py**: 多格式导出（REMARK, HLT）
+  - **spec.py**: 热点规范定义
 
 #### 3. 工作进程 (`worker/`)
 - **worker.py**: RQ worker 主程序
@@ -93,6 +112,20 @@ AbDesign 是一个用于抗体结构分析和设计的 Web 服务平台。该系
 
 #### 4. AbNumber 集成（上游 PyPI 包）
 - 直接依赖 PyPI 上游 `abnumber[anarci]`，提供完整 ANARCI 编号
+
+#### 5. 外部工具集成层 (`integrations/`)
+- **rfantibody.py**: RFantibody/RFdiffusion 工作流适配器
+  - Docker 容器化执行
+  - 热点驱动的抗体设计
+  - 可配置的设计参数
+- **boltzgen.py**: BoltzGen（Boltz-1）工作流适配器
+  - YAML 配置生成
+  - 纳米抗体-靶标预测
+  - 批量设计支持
+- **normalize.py**: 结构标准化和衍生工件生成
+  - 自动化的标准化流程
+  - CDR 标注集成
+  - 残基映射生成
 
 ## 安装和部署
 
@@ -149,11 +182,21 @@ python -m worker.worker
 #### 3. 运行测试
 
 ```bash
-# 冒烟测试
+# 快速自检（无需启动服务）
+make selftest
+# 或
+python scripts/selftest.py
+
+# 完整冒烟测试（需要启动服务）
 python scripts/smoke_test.py --base-url http://localhost:8000
 
 # 如果启用了 API Key
 python scripts/smoke_test.py --base-url http://localhost:8000 --api-key YOUR_KEY
+
+# 运行单元测试
+pytest
+# 或
+make test
 ```
 
 ## API 使用示例
@@ -196,6 +239,15 @@ curl -X POST "http://localhost:8000/submit" \
   -F "vhh_file=@samples/vhh_sample.pdb" \
   -F "target_file=@samples/target_sample.pdb" \
   -F "user_params={\"target_hotspots\":[\"A:305\",\"A:456\",\"B:52A\"]}"
+```
+
+**启用外部集成（RFantibody/BoltzGen）示例：**
+```bash
+curl -X POST "http://localhost:8000/submit" \
+  -F "mode=separate" \
+  -F "vhh_file=@samples/vhh_sample.pdb" \
+  -F "target_file=@samples/target_sample.pdb" \
+  -F "user_params={\"integrations\":{\"rfantibody\":{\"enabled\":true,\"num_designs\":20}}}"
 ```
 
 ### 查询结果
@@ -289,20 +341,38 @@ AbDesign/
 │   └── results.py         # 结果处理
 ├── pipeline/              # 核心分析流水线
 │   ├── runner.py          # 流水线编排器
-│   └── cdr.py             # CDR 标注逻辑
+│   ├── cdr.py             # CDR 标注逻辑
+│   └── epitope/           # 表位/热点处理
+│       ├── standardize.py # 结构标准化
+│       ├── mapping.py     # 残基映射
+│       ├── exporters.py   # 格式导出
+│       └── spec.py        # 规范定义
+├── integrations/          # 外部工具集成
+│   ├── rfantibody.py      # RFantibody 适配器
+│   ├── boltzgen.py        # BoltzGen 适配器
+│   └── normalize.py       # 标准化工具
 ├── worker/                # 后台任务处理
 │   ├── worker.py          # Worker 主程序
 │   ├── tasks.py           # 任务定义
 │   └── queue.py           # 队列管理
 ├── scripts/               # 工具脚本
 │   ├── smoke_test.py      # 冒烟测试
+│   ├── selftest.py        # 快速自检
+│   ├── resolve_hotspots.py # 热点解析工具
 │   └── verify_abnumber.py # 验证使用上游 AbNumber
+├── tests/                 # 测试套件
+│   ├── test_*_integration.py  # 集成测试
+│   ├── test_hotspot_*.py      # 热点处理测试
+│   └── data/              # 测试数据
 ├── samples/               # 示例文件
 │   ├── vhh_sample.pdb     # VHH 示例结构
 │   └── target_sample.pdb  # 靶标示例结构
 ├── requirements.txt       # Python 依赖
+├── Makefile              # 快速命令
 ├── start_uvicorn.sh       # 启动脚本
 ├── TESTING.md            # 测试指南
+├── ARCHITECTURE.md       # 架构文档
+├── DEVELOPMENT.md        # 开发指南
 └── README.md             # 本文件
 ```
 
