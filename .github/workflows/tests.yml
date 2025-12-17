@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install biopython gemmi 'abnumber[anarci]' PyYAML boltzgen
+
+      - name: Run adapter and runner tests
+        run: |
+          pytest tests/test_rfantibody_adapter.py \
+                 tests/test_boltzgen_yaml_generation.py \
+                 tests/test_pipeline_runner_integration.py \
+                 tests/test_runner_artifacts.py

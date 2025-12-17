@@ -119,3 +119,23 @@ def test_generate_boltzgen_yaml_entrypoint(tmp_path: Path) -> None:
     # ensure validation sees scaffold content
     _validate_yaml_indices(output_yaml, mapping)
 
+
+def test_validate_yaml_indices_with_mapping_path(tmp_path: Path) -> None:
+    mapping = _make_mapping(tmp_path)
+    mapping_json = tmp_path / "mapping.json"
+    mapping.write_json(mapping_json)
+
+    cdr_payload = _cdr_payload()
+    target_path = tmp_path / "target.cif"
+    target_path.write_text("test")
+
+    output_yaml = generate_boltzgen_yaml(
+        mapping.standardized,
+        mapping,
+        cdr_payload,
+        target_path,
+        tmp_path / "boltzgen_design.yaml",
+    )
+
+    _validate_yaml_indices(output_yaml, mapping_json)
+
