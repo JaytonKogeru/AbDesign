@@ -5,6 +5,6 @@ rq==1.16.2
 redis==5.2.1
 fakeredis==2.23.3
 requests==2.32.3
-abnumber[anarci]==0.3.1
+abnumber[anarci]==0.4.4
 biopython==1.84
 gemmi>=0.6

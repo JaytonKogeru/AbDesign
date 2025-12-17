@@ -314,7 +314,7 @@ AbDesign/
 | `uvicorn` | 0.32.0 | ASGI 服务器 |
 | `redis` | 5.2.1 | Redis 客户端 |
 | `rq` | 1.16.2 | 任务队列 |
-| `abnumber[anarci]` | 0.3.1 | 抗体编号和 CDR 识别（含 ANARCI） |
+| `abnumber[anarci]` | 0.4.4 | 抗体编号和 CDR 识别（含 ANARCI） |
 | `biopython` | 1.84 | 生物信息学工具 |
 | `gemmi` | 0.6.8 | 结构文件解析 |
 
