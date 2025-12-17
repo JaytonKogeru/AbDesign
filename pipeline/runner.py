@@ -15,10 +15,14 @@ prediction, and scoring models.
 """
 
 import json
+import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
+from integrations.boltzgen import run_boltzgen
+from integrations.normalize import normalize_and_derive
+from integrations.rfantibody import run_rfantibody
 from pipeline.cdr import CDRArtifacts, annotate_cdrs
 from pipeline.epitope.mapping import (
     MappingResultV2,
@@ -28,6 +32,8 @@ from pipeline.epitope.mapping import (
 )
 from pipeline.epitope.standardize import standardize_structure
 from pipeline.epitope.spec import normalize_target_hotspots
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -59,6 +65,39 @@ class ScoringConfig:
 
 
 @dataclass
+class RFantibodyIntegrationConfig:
+    """Configuration for RFantibody adapter."""
+
+    enabled: bool = False
+    use_docker: bool = True
+    docker_image: str = "rfantibody"
+    num_designs: int = 20
+    timeout: int = 3600
+    retries: int = 1
+
+
+@dataclass
+class BoltzgenIntegrationConfig:
+    """Configuration for BoltzGen adapter."""
+
+    enabled: bool = False
+    use_docker: bool = True
+    docker_image: str = "boltzgen"
+    protocol: str = "nanobody-anything"
+    num_designs: int = 50
+    timeout: int = 3600
+    retries: int = 1
+
+
+@dataclass
+class IntegrationConfig:
+    """Container for optional downstream integrations."""
+
+    rfantibody: RFantibodyIntegrationConfig = field(default_factory=RFantibodyIntegrationConfig)
+    boltzgen: BoltzgenIntegrationConfig = field(default_factory=BoltzgenIntegrationConfig)
+
+
+@dataclass
 class PipelineConfig:
     """Top-level configuration passed to the pipeline runner."""
 
@@ -69,6 +108,7 @@ class PipelineConfig:
     binding_site: BindingSiteConfig = field(default_factory=BindingSiteConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     keep_intermediates: bool = True
+    integration: IntegrationConfig = field(default_factory=IntegrationConfig)
 
 
 @dataclass
@@ -83,6 +123,12 @@ class PipelineArtifacts:
     cdr_csv: Optional[Path] = None
     target_residue_mapping: Optional[Path] = None
     target_hotspots_resolved: Optional[Path] = None
+    scaffold_standardized: Optional[Path] = None
+    target_standardized: Optional[Path] = None
+    scaffold_hlt: Optional[Path] = None
+    boltzgen_yaml: Optional[Path] = None
+    rfantibody_outputs: Optional[Dict[str, Any]] = None
+    boltzgen_outputs: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -99,6 +145,8 @@ class PipelineResult:
     target_hotspots_input: Optional[list]
     target_hotspots_resolved: Optional[ResolveResultV2]
     target_mapping_file: Optional[Path]
+    normalization: Optional[Dict[str, Any]] = None
+    integration_outputs: Optional[Dict[str, Any]] = None
     config: Dict[str, Any]
 
 
@@ -122,6 +170,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         in real algorithms later.
     """
 
+    LOGGER.info("Starting pipeline in %s mode", mode)
+
     numbering_scheme = _resolve_numbering_scheme(inputs)
     config = _build_config(mode, inputs, numbering_scheme)
     config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -133,16 +183,83 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
     cdr_json_path = config.output_dir / "cdr_annotations.json"
     cdr_csv_path = config.output_dir / "cdr_annotations.csv"
 
+    files = inputs.get("files", {})
+    scaffold_path = files.get("vhh_file") or files.get("scaffold_file") or files.get("complex_file")
+    target_path = files.get("target_file") or files.get("target")
+    chain_role_map = (inputs.get("user_params") or {}).get("chain_role_map") or {}
+
     alignment_result = _run_structure_alignment(config.alignment, inputs)
     binding_site_result = _predict_binding_sites(config.binding_site, inputs)
     scoring_result = _score_models(config.scoring, binding_site_result, inputs)
-    cdr_annotation = _maybe_annotate_cdrs(inputs, CDRArtifacts(cdr_json_path, cdr_csv_path))
-    hotspot_payload = _maybe_process_hotspots(inputs, config.output_dir)
+
+    normalization: Dict[str, Any] | None = None
+    cdr_annotation: Optional[Dict[str, Any]] = None
+    cdr_mapping_payload: Optional[Dict[str, Any]] = None
+    if scaffold_path:
+        normalization = normalize_and_derive(
+            scaffold_path,
+            target_path,
+            str(config.output_dir / "normalized"),
+            numbering_scheme=numbering_scheme,
+            chain_role_map=chain_role_map,
+        )
+        cdr_annotation = normalization.get("scaffold_cdr_payload") or normalization.get("scaffold_cdr_mapping_payload")
+        cdr_mapping_payload = normalization.get("scaffold_cdr_mapping_payload")
+        cdr_json_path = Path(normalization.get("scaffold_cdr_annotations", cdr_json_path))
+        cdr_csv_path = cdr_json_path.with_suffix(".csv")
+        predicted_path = Path(normalization.get("scaffold_standardized", predicted_path))
+
+    if cdr_annotation is None:
+        cdr_annotation = _maybe_annotate_cdrs(inputs, CDRArtifacts(cdr_json_path, cdr_csv_path))
+
+    hotspot_payload = _maybe_process_hotspots(
+        inputs,
+        config.output_dir,
+        mapping_override=normalization.get("target_mapping") if normalization else None,
+        standardized_override=normalization.get("target_standardized") if normalization else None,
+    )
+
+    rfantibody_output: Optional[Dict[str, Any]] = None
+    boltzgen_output: Optional[Dict[str, Any]] = None
+
+    if normalization and config.integration.rfantibody.enabled and normalization.get("scaffold_hlt_path"):
+        design_loops = _design_loops_from_cdr(cdr_mapping_payload)
+        rfantibody_output = run_rfantibody(
+            config.output_dir,
+            normalization.get("scaffold_hlt_path"),
+            normalization.get("target_standardized") or target_path,
+            hotspots_resolved=(hotspot_payload or {}).get("resolved_summary"),
+            design_loops=design_loops,
+            num_designs=config.integration.rfantibody.num_designs,
+            use_docker=config.integration.rfantibody.use_docker,
+            docker_image=config.integration.rfantibody.docker_image,
+            timeout=config.integration.rfantibody.timeout,
+            retries=config.integration.rfantibody.retries,
+        )
+        if rfantibody_output.get("design_pdbs"):
+            predicted_path = Path(rfantibody_output["design_pdbs"][0])
+
+    if normalization and normalization.get("boltzgen_yaml") and config.integration.boltzgen.enabled:
+        boltzgen_output = run_boltzgen(
+            config.output_dir,
+            normalization.get("boltzgen_yaml"),
+            protocol=config.integration.boltzgen.protocol,
+            num_designs=config.integration.boltzgen.num_designs,
+            mapping=normalization.get("scaffold_mapping"),
+            use_docker=config.integration.boltzgen.use_docker,
+            docker_image=config.integration.boltzgen.docker_image,
+            timeout=config.integration.boltzgen.timeout,
+            retries=config.integration.boltzgen.retries,
+        )
+        if boltzgen_output.get("final_ranked_designs"):
+            predicted_path = Path(boltzgen_output["final_ranked_designs"][0])
 
     mock_score = scoring_result.get("summary_score", 0.0)
 
     _write_mock_structure(predicted_path, mode)
     _write_mock_scores(scores_csv_path, scores_tsv_path, mock_score)
+
+    normalization_summary = _summarize_normalization(normalization)
 
     summary_payload: MutableMapping[str, Any] = {
         "mode": mode,
@@ -157,6 +274,11 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         "target_hotspots_input": hotspot_payload.get("input") if hotspot_payload else None,
         "target_hotspots_resolved": hotspot_payload.get("resolved_summary") if hotspot_payload else None,
         "target_mapping_file": str(hotspot_payload.get("mapping_path")) if hotspot_payload else None,
+        "normalization": normalization_summary,
+        "integrations": {
+            "rfantibody": rfantibody_output,
+            "boltzgen": boltzgen_output,
+        },
         "artifacts": {
             "target_residue_mapping": str(hotspot_payload.get("mapping_path")) if hotspot_payload else None,
             "target_hotspots_resolved": str(hotspot_payload.get("resolved_path")) if hotspot_payload else None,
@@ -173,6 +295,20 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         cdr_csv=cdr_csv_path if cdr_annotation else None,
         target_residue_mapping=hotspot_payload.get("mapping_path") if hotspot_payload else None,
         target_hotspots_resolved=hotspot_payload.get("resolved_path") if hotspot_payload else None,
+        scaffold_standardized=Path(normalization.get("scaffold_standardized"))
+        if normalization and normalization.get("scaffold_standardized")
+        else None,
+        target_standardized=Path(normalization.get("target_standardized"))
+        if normalization and normalization.get("target_standardized")
+        else None,
+        scaffold_hlt=Path(normalization.get("scaffold_hlt_path"))
+        if normalization and normalization.get("scaffold_hlt_path")
+        else None,
+        boltzgen_yaml=Path(normalization.get("boltzgen_yaml"))
+        if normalization and normalization.get("boltzgen_yaml")
+        else None,
+        rfantibody_outputs=rfantibody_output,
+        boltzgen_outputs=boltzgen_output,
     )
     return PipelineResult(
         artifacts=artifacts,
@@ -185,6 +321,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         target_hotspots_input=hotspot_payload.get("input") if hotspot_payload else None,
         target_hotspots_resolved=hotspot_payload.get("resolve_result") if hotspot_payload else None,
         target_mapping_file=hotspot_payload.get("mapping_path") if hotspot_payload else None,
+        normalization=normalization_summary,
+        integration_outputs={"rfantibody": rfantibody_output, "boltzgen": boltzgen_output},
         config={**config.config_dict, "cdr_annotation": cdr_annotation},
     )
 
@@ -218,6 +356,30 @@ def _build_config(
         extra_features=inputs.get("scoring_features", {}),
     )
 
+    integration_params = inputs.get("integration") or {}
+    rfantibody_params = integration_params.get("rfantibody") or {}
+    boltzgen_params = integration_params.get("boltzgen") or {}
+
+    integration = IntegrationConfig(
+        rfantibody=RFantibodyIntegrationConfig(
+            enabled=rfantibody_params.get("enabled", False),
+            use_docker=rfantibody_params.get("use_docker", True),
+            docker_image=rfantibody_params.get("docker_image", "rfantibody"),
+            num_designs=rfantibody_params.get("num_designs", 20),
+            timeout=rfantibody_params.get("timeout", 3600),
+            retries=rfantibody_params.get("retries", 1),
+        ),
+        boltzgen=BoltzgenIntegrationConfig(
+            enabled=boltzgen_params.get("enabled", False),
+            use_docker=boltzgen_params.get("use_docker", True),
+            docker_image=boltzgen_params.get("docker_image", "boltzgen"),
+            protocol=boltzgen_params.get("protocol", "nanobody-anything"),
+            num_designs=boltzgen_params.get("num_designs", 50),
+            timeout=boltzgen_params.get("timeout", 3600),
+            retries=boltzgen_params.get("retries", 1),
+        ),
+    )
+
     config = PipelineConfig(
         mode=mode,
         output_dir=output_dir,
@@ -226,6 +388,7 @@ def _build_config(
         binding_site=binding_site,
         scoring=scoring,
         keep_intermediates=inputs.get("keep_intermediates", True),
+        integration=integration,
     )
     config.config_dict = _serialize_config(config)  # type: ignore[attr-defined]
     return config
@@ -243,7 +406,13 @@ def _serialize_config(config: PipelineConfig) -> Dict[str, Any]:
     return {key: _convert(val) for key, val in config_dict.items()}
 
 
-def _maybe_process_hotspots(inputs: Mapping[str, Any], output_dir: Path) -> Optional[Dict[str, Any]]:
+def _maybe_process_hotspots(
+    inputs: Mapping[str, Any],
+    output_dir: Path,
+    *,
+    mapping_override: MappingResultV2 | None = None,
+    standardized_override: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     user_params = inputs.get("user_params") or {}
     raw_hotspots = user_params.get("target_hotspots")
     if raw_hotspots is None:
@@ -253,10 +422,16 @@ def _maybe_process_hotspots(inputs: Mapping[str, Any], output_dir: Path) -> Opti
     structure_path = _select_structure_for_hotspots(inputs.get("files", {}))
     scope = user_params.get("hotspot_residue_scope", "protein")
 
-    standardized = standardize_structure(structure_path, output_dir)
-    mapping_result_v2 = build_residue_mapping_v2(standardized)
-    mapping_path = output_dir / "target_residue_mapping.json"
-    mapping_result_v2.write_json(mapping_path)
+    if mapping_override:
+        mapping_result_v2 = mapping_override
+        mapping_path = output_dir / "target_residue_mapping.json"
+        mapping_result_v2.write_json(mapping_path)
+    else:
+        standardized_path = Path(standardized_override) if standardized_override else structure_path
+        standardized = standardize_structure(standardized_path, output_dir)
+        mapping_result_v2 = build_residue_mapping_v2(standardized)
+        mapping_path = output_dir / "target_residue_mapping.json"
+        mapping_result_v2.write_json(mapping_path)
 
     resolve_result_v2 = resolve_hotspots_v2(auth_hotspots, mapping_result_v2, scope=scope)
     resolved_path = output_dir / "target_hotspots_resolved.json"
@@ -282,6 +457,48 @@ def _maybe_process_hotspots(inputs: Mapping[str, Any], output_dir: Path) -> Opti
         "mapping_path": mapping_path,
         "resolved_path": resolved_path,
     }
+
+
+def _design_loops_from_cdr(cdr_payload: Optional[Mapping[str, Any]]) -> list[str]:
+    loops: list[str] = []
+    if not cdr_payload or cdr_payload.get("status") != "succeeded":
+        return loops
+
+    for cdr in cdr_payload.get("cdr_mappings", []):
+        if cdr.get("status") != "mapped":
+            continue
+        start = cdr.get("label_seq_id_start")
+        end = cdr.get("label_seq_id_end")
+        if start is None or end is None:
+            continue
+        name = cdr.get("cdr_name") or cdr.get("name") or "loop"
+        loops.append(f"{name}:{start}-{end}")
+    return loops
+
+
+def _summarize_normalization(normalization: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not normalization:
+        return None
+
+    fields = [
+        "scaffold_standardized",
+        "scaffold_mapping_json",
+        "scaffold_cdr_annotations",
+        "scaffold_cdr_mappings_json",
+        "scaffold_hlt_path",
+        "scaffold_chain_map_json",
+        "boltzgen_yaml",
+        "target_standardized",
+        "target_mapping_json",
+    ]
+    summary: Dict[str, Any] = {}
+    for key in fields:
+        value = normalization.get(key)
+        if value is not None:
+            summary[key] = str(value)
+    if normalization.get("scaffold_cdr_mapping_payload"):
+        summary["cdr_mapping"] = normalization.get("scaffold_cdr_mapping_payload")
+    return summary
 
 
 def _run_structure_alignment(
@@ -430,6 +647,9 @@ def _write_cdr_outputs(payload: Mapping[str, Any], json_destination: Path, csv_d
 
 
 def _write_mock_structure(destination: Path, mode: str) -> None:
+    if destination.exists():
+        return
+
     pdb_content = f"""
 HEADER    MOCK PREDICTION GENERATED BY pipeline.runner
 REMARK    MODE: {mode}

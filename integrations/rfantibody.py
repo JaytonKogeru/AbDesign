@@ -30,9 +30,12 @@ def run_rfantibody(
     hotspots_resolved: Optional[Iterable[Dict[str, object]]] = None,
     design_loops: Optional[Sequence[Union[str, Dict[str, object]]]] = None,
     num_designs: int = 20,
+    *,
     use_docker: Optional[bool] = None,
     docker_image: str = "rfantibody",
     timeout: int = 3600,
+    retries: int = 1,
+    cache_dir: Path | None = None,
 ) -> Dict[str, object]:
     """Execute RFantibody RFdiffusion inference and collect outputs."""
 
@@ -64,16 +67,20 @@ def run_rfantibody(
         base_cmd.extend(["--antibody.design_loops", design_loops_token])
 
     if use_docker:
+        cache_dir = cache_dir or Path.home() / ".cache" / "huggingface"
+        cache_dir.mkdir(parents=True, exist_ok=True)
         container_cmd = [
             "docker",
             "run",
             "--rm",
-            "-v",
-            f"{task_root}:/home",
-            "-w",
-            "/home",
             "--gpus",
             "all",
+            "-v",
+            f"{task_root}:/home",
+            "-v",
+            f"{cache_dir}:{cache_dir}",
+            "-w",
+            "/home",
             docker_image,
             "bash",
             "-lc",
@@ -88,35 +95,44 @@ def run_rfantibody(
     stdout_path = logs_dir / "rfantibody.stdout.log"
     stderr_path = logs_dir / "rfantibody.stderr.log"
 
-    completed = subprocess.run(
-        exec_cmd,
-        cwd=str(task_root),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
-
-    stdout_path.write_text(completed.stdout)
-    stderr_path.write_text(completed.stderr)
+    attempt = 0
+    completed: subprocess.CompletedProcess[str] | None = None
+    while attempt <= max(retries, 0):
+        attempt += 1
+        LOGGER.info("Running RFantibody (attempt %s): %s", attempt, " ".join(map(shlex.quote, exec_cmd)))
+        completed = subprocess.run(
+            exec_cmd,
+            cwd=str(task_root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        stdout_path.write_text(completed.stdout)
+        stderr_path.write_text(completed.stderr)
+        if completed.returncode == 0:
+            break
+        LOGGER.warning("RFantibody attempt %s failed with code %s", attempt, completed.returncode)
 
     result: Dict[str, object] = {
-        "status": "succeeded" if completed.returncode == 0 else "failed",
-        "returncode": completed.returncode,
+        "status": "succeeded" if completed and completed.returncode == 0 else "failed",
+        "returncode": completed.returncode if completed else None,
         "command": exec_cmd,
         "stdout_log": str(stdout_path),
         "stderr_log": str(stderr_path),
         "output_dir": str(output_dir),
     }
 
-    if completed.returncode != 0:
+    if completed and completed.returncode == 0:
+        result.update(_collect_outputs(output_dir))
+    else:
         result["reason"] = "RFantibody execution failed"
         LOGGER.error(
-            "RFantibody inference failed with code %s. See %s", completed.returncode, stderr_path
+            "RFantibody inference failed with code %s. See %s",
+            completed.returncode if completed else "?",
+            stderr_path,
         )
-    else:
-        result.update(_collect_outputs(output_dir))
 
     return result
 

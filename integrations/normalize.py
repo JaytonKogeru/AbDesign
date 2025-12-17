@@ -80,6 +80,8 @@ def normalize_and_derive(
         "scaffold_mapping_json": str(scaffold_mapping_path),
         "scaffold_cdr_annotations": str(scaffold_cdr_json),
         "scaffold_cdr_mappings_json": str(cdr_mapping_path),
+        "scaffold_cdr_payload": cdr_payload,
+        "scaffold_cdr_mapping_payload": cdr_mapping_payload,
         "scaffold_hlt_path": str(hlt_path) if hlt_path.exists() else None,
         "scaffold_chain_map_json": str(chain_map_path) if hlt_chain_map and chain_map_path.exists() else None,
         "boltzgen_yaml": None,
