@@ -5,9 +5,9 @@ from pipeline.epitope.spec import normalize_target_hotspots, parse_hotspot_token
 
 class TestHotspotParsing(unittest.TestCase):
     def test_parse_hotspot_token_with_insertion(self) -> None:
-        ref = parse_hotspot_token("A:52A")
+        ref = parse_hotspot_token("A:55A")
         self.assertEqual(ref.chain, "A")
-        self.assertEqual(ref.resi, 52)
+        self.assertEqual(ref.resi, 55)
         self.assertEqual(ref.ins, "A")
 
     def test_parse_hotspot_token_without_insertion(self) -> None:

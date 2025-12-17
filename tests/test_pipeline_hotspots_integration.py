@@ -1,4 +1,5 @@
 import json
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,15 +20,15 @@ class TestPipelineHotspotsIntegration(unittest.TestCase):
 
         result = run_pipeline("separate", inputs)
 
-        self.assertIsNotNone(result.artifacts.target_residue_mapping)
-        self.assertTrue(result.artifacts.target_residue_mapping.exists())
-        self.assertIsNotNone(result.artifacts.target_hotspots_resolved)
-        self.assertTrue(result.artifacts.target_hotspots_resolved.exists())
+        self.assertIsNotNone(result.artifacts.target_residue_mapping_v2)
+        self.assertTrue(result.artifacts.target_residue_mapping_v2.exists())
+        self.assertIsNotNone(result.artifacts.target_hotspots_resolved_v2)
+        self.assertTrue(result.artifacts.target_hotspots_resolved_v2.exists())
 
         summary_payload = json.loads(result.artifacts.summary_json.read_text())
         self.assertTrue(summary_payload["target_hotspots_input"])
         self.assertTrue(summary_payload["target_hotspots_resolved"]["resolved"])
-        self.assertTrue(summary_payload["artifacts"]["target_hotspots_resolved"])
+        self.assertTrue(summary_payload["artifacts"]["target_hotspots_resolved_v2"])
 
     def _get_tmp_dir(self) -> Path:
         return Path(tempfile.mkdtemp(prefix="hotspots-"))
