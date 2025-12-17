@@ -7,7 +7,7 @@ import logging
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
 
 LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +31,8 @@ def run_rfantibody(
     design_loops: Optional[Sequence[Union[str, Dict[str, object]]]] = None,
     num_designs: int = 20,
     *,
+    user_params: Optional[Dict[str, Any]] = None,
+    normalization: Optional[Dict[str, Any]] = None,
     use_docker: Optional[bool] = None,
     docker_image: str = "rfantibody",
     timeout: int = 3600,
@@ -45,8 +47,28 @@ def run_rfantibody(
     output_dir = task_root / "rfantibody_output"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    hotspot_token = _format_hotspots(hotspots_resolved)
-    design_loops_token = _format_design_loops(design_loops)
+    normalization = normalization or {}
+    user_params = user_params or {}
+
+    hotspot_source: Any = user_params.get("hotspots")
+    design_loop_source: Any = user_params.get("design_loops")
+
+    hotspot_source = hotspot_source or _load_json(
+        normalization.get("target_hotspots_resolved_json")
+        or normalization.get("target_hotspots_resolved")
+    )
+    hotspot_source = hotspot_source or hotspots_resolved
+
+    cdr_mapping_json = _load_json(
+        normalization.get("scaffold_cdr_mappings_json")
+        or normalization.get("cdr_label_mappings")
+    )
+
+    if design_loop_source is None:
+        design_loop_source = design_loops
+
+    hotspot_token = _format_hotspots_for_rf(hotspot_source, cdr_mapping_json)
+    design_loops_token = _format_design_loops_for_rf(design_loop_source, cdr_mapping_json)
 
     base_cmd = [
         "python",
@@ -137,46 +159,79 @@ def run_rfantibody(
     return result
 
 
-def _format_hotspots(hotspots: Optional[Iterable[Dict[str, object]]]) -> str:
+def _load_json(path_or_obj: Any) -> Any:
+    if path_or_obj is None:
+        return None
+    if isinstance(path_or_obj, (str, Path)):
+        try:
+            return json.loads(Path(path_or_obj).read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            LOGGER.warning("Failed to load JSON from %s", path_or_obj)
+            return None
+    return path_or_obj
+
+
+def _format_hotspots_for_rf(hotspots_input: Any, mapping: Any = None) -> str:
     tokens: List[str] = []
-    for hotspot in hotspots or []:
-        if isinstance(hotspot, str):
-            tokens.append(hotspot)
-            continue
-
-        chain = hotspot.get("chain") or hotspot.get("chain_id") or hotspot.get("label_asym_id")
-        chain = chain or hotspot.get("auth_asym_id") or "T"
-
-        residue_id = (
-            hotspot.get("label_seq_id")
-            or hotspot.get("present_seq_id")
-            or hotspot.get("auth_seq_id")
-            or hotspot.get("seq_id")
-        )
-
-        if chain and residue_id is not None:
-            tokens.append(f"{chain}{residue_id}")
-    return ",".join(tokens)
-
-
-def _format_design_loops(design_loops: Optional[Sequence[Union[str, Dict[str, object]]]]) -> str:
-    if not design_loops:
+    if not hotspots_input:
         return ""
 
-    tokens: List[str] = []
-    for loop in design_loops:
-        if isinstance(loop, str):
-            tokens.append(loop)
-            continue
+    if isinstance(hotspots_input, dict) and hotspots_input.get("status") == "succeeded":
+        for hotspot in hotspots_input.get("hotspots", []):
+            chain = hotspot.get("chain") or hotspot.get("label_asym_id")
+            residue_id = hotspot.get("label_seq_id") or hotspot.get("present_seq_id") or hotspot.get("auth_resi")
+            if chain and residue_id is not None:
+                tokens.append(f"{chain}{residue_id}")
+        return ",".join(tokens)
 
-        name = str(loop.get("cdr_name") or loop.get("name") or "loop")
-        start = loop.get("label_seq_id_start") or loop.get("start")
-        end = loop.get("label_seq_id_end") or loop.get("end")
-        if start is None or end is None:
-            continue
-        tokens.append(f"{name}:{start}-{end}")
+    if isinstance(hotspots_input, (list, tuple)):
+        for hotspot in hotspots_input:
+            if isinstance(hotspot, str):
+                tokens.append(hotspot.replace(":", ""))
+                continue
 
+            chain = hotspot.get("chain") or hotspot.get("auth_chain") or hotspot.get("chain_id") or "T"
+            residue_id = (
+                hotspot.get("resi")
+                or hotspot.get("label_seq_id")
+                or hotspot.get("present_seq_id")
+                or hotspot.get("auth_seq_id")
+                or hotspot.get("seq_id")
+            )
+            if chain and residue_id is not None:
+                tokens.append(f"{chain}{residue_id}")
     return ",".join(tokens)
+
+
+def _format_design_loops_for_rf(design_loops_input: Any, cdr_mapping_json: Any = None) -> str:
+    if design_loops_input:
+        if isinstance(design_loops_input, str):
+            return design_loops_input
+        if isinstance(design_loops_input, (list, tuple)):
+            normalized: List[str] = []
+            for loop in design_loops_input:
+                if isinstance(loop, str):
+                    normalized.append(loop)
+                    continue
+                name = str(loop.get("cdr_name") or loop.get("name") or "loop")
+                start = loop.get("label_seq_id_start") or loop.get("start")
+                end = loop.get("label_seq_id_end") or loop.get("end")
+                if start is not None and end is not None:
+                    normalized.append(f"{name}:{start}-{end}")
+            return ",".join(normalized)
+
+    if cdr_mapping_json:
+        tokens: List[str] = []
+        for cdr in cdr_mapping_json.get("cdr_mappings", []):
+            if cdr.get("status") == "mapped":
+                name = cdr.get("cdr_name")
+                start = cdr.get("label_seq_id_start")
+                end = cdr.get("label_seq_id_end")
+                if name and start is not None and end is not None:
+                    tokens.append(f"{name}:{start}-{end}")
+        return ",".join(tokens)
+
+    return ""
 
 
 def _quote_for_shell(parts: Sequence[str]) -> str:
