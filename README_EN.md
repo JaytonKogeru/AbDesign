@@ -1,4 +1,4 @@
-# AbDesign - Antibody Design Service
+# AbDesign - Antibody Design Tool Integration Platform
 
 [![中文](https://img.shields.io/badge/docs-中文-blue)](README.md)
 [![Architecture](https://img.shields.io/badge/docs-Architecture-green)](ARCHITECTURE.md)
@@ -7,134 +7,147 @@
 
 ## Overview
 
-AbDesign is a web service platform for antibody structure analysis and design. The system focuses on CDR (Complementarity-Determining Region) annotation, structure prediction, and binding site analysis for VHH (Variable domain of Heavy-chain-only antibodies, also known as nanobodies).
+AbDesign is a **unified gateway platform for antibody design tools**, designed to transform user-provided structure information into configuration languages and execution commands that various antibody design tools can understand. The platform integrates mainstream antibody design tools such as RFantibody and BoltzGen, and can easily be extended to integrate more tools.
 
 ## 📚 Documentation Navigation
 
 - **[README (中文)](README.md)** - Chinese version documentation
 - **[Architecture Documentation (ARCHITECTURE.md)](ARCHITECTURE.md)** - Detailed technical architecture and modules
-- **[Development Guide (DEVELOPMENT.md)](DEVELOPMENT.md)** - Quick development guide and troubleshooting
+- **[Development Guide (DEVELOPMENT.md)](DEVELOPMENT.md)** - API details, development guide and troubleshooting
 - **[Testing Guide (TESTING.md)](TESTING.md)** - Environment setup and testing methods
 
-The above documents are the canonical entry points; no extra summary or index files are required.
+## Core Positioning
 
-## Key Features
+AbDesign serves as a **unified gateway**, solving the following problems:
 
-### 1. CDR Region Annotation
-- Support for multiple numbering schemes (Chothia, IMGT, etc.)
-- Automatic identification and annotation of CDR1, CDR2, CDR3 regions
-- Precise numbering based on [AbNumber](https://github.com/prihoda/abnumber) library
-- Output in JSON and CSV formats
+1. **Unified Input Interface**: Provides standardized structure file upload and parameter configuration
+2. **Automatic Format Conversion**: Transforms user inputs into tool-specific configuration files (YAML, JSON, command-line arguments, etc.)
+3. **Tool Orchestration**: Coordinates the execution workflow of multiple antibody design tools
+4. **Result Integration**: Collects and standardizes outputs from various tools
+5. **Extensibility**: Easily add new antibody design tool integrations
 
-### 2. Structure Analysis and Standardization
-- Support for PDB and mmCIF format structure files
-- Two submission modes:
-  - **separate mode**: Upload VHH and target structures separately
-  - **complex mode**: Upload complex structure
-- Automatic sequence and chain information extraction
-- Structure standardization processing, generating normalized mmCIF format
-- Residue mapping functionality supporting auth and label identifier conversion
+## Integrated Tools
 
-### 3. Epitope/Hotspot Processing
-- Support for user-specified target hotspot residues (via `target_hotspots` parameter)
-- Hotspot residue parsing and standardization
-- Generation of residue mapping files (v2 schema)
-- Export hotspot annotations in multiple formats (REMARK, HLT, JSON)
+### 🧬 RFantibody
+An RFdiffusion-based antibody design tool focused on hotspot-driven antibody optimization.
 
-### 4. Asynchronous Task Processing
-- Task queue system based on Redis and RQ (Redis Queue)
-- Support for long-running computational tasks
-- Real-time task status queries
+**Capabilities provided by AbDesign:**
+- Automatically converts PDB/mmCIF structures to RFantibody input format
+- Parses user-specified hotspot residues and generates HLT files
+- Configures design parameters (design regions, number of designs, etc.)
+- Executes via Docker containerization or direct invocation
+- Collects and standardizes design results
 
-### 5. External Tool Integration (Optional)
-- **RFantibody Integration**: Support for RFdiffusion-driven antibody design
-- **BoltzGen Integration**: Support for Boltz-1 based structure prediction
-- Flexible configuration options and Docker containerization support
+**Usage Example:**
+```bash
+curl -X POST "http://localhost:8000/submit" \
+  -F "mode=separate" \
+  -F "vhh_file=@nanobody.pdb" \
+  -F "target_file=@target.pdb" \
+  -F "user_params={\"integrations\":{\"rfantibody\":{\"enabled\":true,\"num_designs\":20}}}"
+```
+
+### 🔬 BoltzGen
+A structure prediction tool based on the Boltz-1 model, suitable for nanobody-target complex prediction.
+
+**Capabilities provided by AbDesign:**
+- Automatically generates BoltzGen YAML configuration files
+- Handles nanobody and target chain mapping relationships
+- Manages batch design tasks
+- Supports Docker containerized execution
+- Validates and collects output results
+
+**Usage Example:**
+```bash
+curl -X POST "http://localhost:8000/submit" \
+  -F "mode=separate" \
+  -F "vhh_file=@nanobody.pdb" \
+  -F "target_file=@target.pdb" \
+  -F "user_params={\"integrations\":{\"boltzgen\":{\"enabled\":true,\"protocol\":\"nanobody-anything\",\"num_designs\":50}}}"
+```
+
+## Supporting Modules
+
+To support tool integration, AbDesign provides the following auxiliary features:
+
+### 1. Structure Standardization and Residue Mapping
+- Unified PDB and mmCIF format handling
+- Generates standardized mmCIF structures
+- Establishes auth/label residue identifier mappings
+- Supports hotspot residue format conversion
+
+### 2. CDR Region Annotation
+- Automatically identifies and annotates CDR1, CDR2, CDR3 regions
+- Supports multiple numbering schemes (Chothia, IMGT, Kabat, etc.)
+- Provides precise sequence and structure information for tools
+
+### 3. Asynchronous Task Management
+- Task queue based on Redis and RQ
+- Supports long-running design tasks
+- Real-time task status queries and result downloads
 
 ## Technical Architecture
 
-### System Architecture Diagram
+AbDesign adopts a microservices architecture with a core focus on **configuration generation and tool orchestration**:
 
 ```
-┌──────────┐      ┌──────────────┐      ┌──────────┐
-│  Client  │ HTTP │   FastAPI    │      │  Worker  │
-│(Requests)│─────▶│  API Service │◀────▶│ Process  │
-└──────────┘      └──────────────┘      └──────────┘
-                          │                    │
-                          │                    │
-                          ▼                    ▼
-                  ┌──────────────┐      ┌────────────┐
-                  │    Redis     │      │  Pipeline  │
-                  │ Message Queue│      │(CDR Annot.)│
-                  └──────────────┘      └────────────┘
-                          │
-                          ▼
-                  ┌──────────────┐
-                  │File Storage  │
-                  │  (/tmp/...)  │
-                  └──────────────┘
+┌─────────────────┐
+│  User Input     │
+│ (Structures +   │
+│  Parameters)    │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│Standardization  │
+│   Layer         │
+│ - Format Conv.  │
+│ - Residue Map.  │
+│ - CDR Annot.    │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Configuration   │
+│  Generation     │
+│ - YAML Config   │
+│ - HLT Files     │
+│ - CLI Args      │
+└────────┬────────┘
+         │
+         ├──────────┬──────────┬─────────┐
+         ▼          ▼          ▼         ▼
+    ┌────────┐ ┌────────┐ ┌────────┐  ...
+    │RFanti- │ │BoltzGen│ │ Future │
+    │ body   │ │        │ │  Tools │
+    └────┬───┘ └───┬────┘ └───┬────┘
+         │         │          │
+         └─────────┴──────────┘
+                   │
+                   ▼
+         ┌─────────────────┐
+         │Result Collection│
+         │ & Integration   │
+         └─────────────────┘
 ```
 
-### Core Components
+### Core Modules
 
-#### 1. API Layer (`api/`)
-- **main.py**: FastAPI application entry point
-  - `/health`: Health check endpoint
-  - `/submit`: Submit analysis tasks
-  - `/result/{task_id}`: Query task results
-  - `/download/{task_id}/{artifact}`: Download generated files
-- **config.py**: Environment configuration management
-- **schemas.py**: Data model definitions
-- **storage.py**: File storage management
-- **task_store.py**: Task state persistence
-- **validators.py**: Input validation
+1. **API Layer (`api/`)**: Provides HTTP interface, handles file uploads and task submission
+2. **Pipeline Layer (`pipeline/`)**: Structure standardization, CDR annotation, residue mapping
+3. **Integration Layer (`integrations/`)**: Tool adapters and configuration generators
+4. **Worker Process (`worker/`)**: Asynchronous task execution and result collection
 
-#### 2. Pipeline Layer (`pipeline/`)
-- **runner.py**: Main pipeline orchestrator
-  - Structure alignment (interface reserved)
-  - Binding site prediction (interface reserved)
-  - Scoring model (mock implementation)
-  - CDR annotation (full implementation)
-  - External tool integration (RFantibody, BoltzGen)
-- **cdr.py**: Core CDR annotation logic
-  - Uses gemmi for structure parsing
-  - Uses abnumber for CDR identification
-- **epitope/**: Epitope and hotspot processing module
-  - **standardize.py**: Structure standardization, generates canonical mmCIF
-  - **mapping.py**: Residue mapping and hotspot parsing
-  - **exporters.py**: Multi-format export (REMARK, HLT)
-  - **spec.py**: Hotspot specification definitions
+For detailed architecture documentation, see [ARCHITECTURE.md](ARCHITECTURE.md)
 
-#### 3. Worker Process (`worker/`)
-- **worker.py**: RQ worker main program
-- **tasks.py**: Background task definitions
-- **queue.py**: Redis queue management
-
-#### 4. AbNumber Integration (upstream PyPI package)
-- Relies on upstream `abnumber[anarci]` from PyPI for full ANARCI numbering
-
-#### 5. External Tool Integration Layer (`integrations/`)
-- **rfantibody.py**: RFantibody/RFdiffusion workflow adapter
-  - Docker containerized execution
-  - Hotspot-driven antibody design
-  - Configurable design parameters
-- **boltzgen.py**: BoltzGen (Boltz-1) workflow adapter
-  - YAML configuration generation
-  - Nanobody-target prediction
-  - Batch design support
-- **normalize.py**: Structure standardization and derived artifact generation
-  - Automated standardization workflow
-  - CDR annotation integration
-  - Residue mapping generation
-
-## Installation and Deployment
+## Quick Start
 
 ### Requirements
 - Python 3.10+
 - Redis Server
 - Dependencies (see requirements.txt)
 
-### Quick Start
+### Installation Steps
 
 #### 1. Install Dependencies
 
@@ -151,13 +164,6 @@ conda install -c conda-forge redis-server -y
 pip install -r requirements.txt
 ```
 
-Using uv (optional):
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install -r requirements.txt
-```
-
 #### 2. Start Services
 
 You need to start three components (recommended in three separate terminals):
@@ -170,8 +176,6 @@ redis-server --daemonize yes
 **Terminal 2 - API Service:**
 ```bash
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --log-level info
-# Or use the startup script
-./start_uvicorn.sh
 ```
 
 **Terminal 3 - Worker:**
@@ -179,135 +183,126 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000 --log-level info
 python -m worker.worker
 ```
 
-#### 3. Run Tests
+#### 3. Submit Design Tasks
 
+**Basic usage (standardization and CDR annotation only):**
 ```bash
-# Quick self-check (no services needed)
-make selftest
-# or
-python scripts/selftest.py
-
-# Full smoke test (requires services running)
-python scripts/smoke_test.py --base-url http://localhost:8000
-
-# With API Key (if enabled)
-python scripts/smoke_test.py --base-url http://localhost:8000 --api-key YOUR_KEY
-
-# Run unit tests
-pytest
-# or
-make test
+curl -X POST "http://localhost:8000/submit" \
+  -F "mode=separate" \
+  -F "vhh_file=@samples/vhh_sample.pdb" \
+  -F "target_file=@samples/target_sample.pdb"
 ```
 
-## API Usage Examples
-
-### Submit Task
-
-**Separate mode (separate uploads):**
+**Enable RFantibody design:**
 ```bash
 curl -X POST "http://localhost:8000/submit" \
   -F "mode=separate" \
   -F "vhh_file=@samples/vhh_sample.pdb" \
   -F "target_file=@samples/target_sample.pdb" \
-  -F "numbering_scheme=chothia"
+  -F "user_params={\"target_hotspots\":[\"A:305\",\"A:456\"],\"integrations\":{\"rfantibody\":{\"enabled\":true,\"num_designs\":20,\"design_loops\":[\"H1\",\"H3\"]}}}"
 ```
 
-Response example:
-```json
-{
-  "task_id": "abc123def456",
-  "job_id": "rq:job:xyz789",
-  "mode": "separate",
-  "numbering_scheme": "chothia",
-  "received_files": ["vhh_file", "target_file"],
-  "status": "queued"
-}
-```
-
-**Complex mode (complex upload):**
-```bash
-curl -X POST "http://localhost:8000/submit" \
-  -F "mode=complex" \
-  -F "complex_file=@samples/complex.pdb" \
-  -F "numbering_scheme=imgt"
-```
-
-**Including target hotspots (pdb_auth) via user_params:**
+**Enable BoltzGen prediction:**
 ```bash
 curl -X POST "http://localhost:8000/submit" \
   -F "mode=separate" \
   -F "vhh_file=@samples/vhh_sample.pdb" \
   -F "target_file=@samples/target_sample.pdb" \
-  -F "user_params={\"target_hotspots\":[\"A:305\",\"A:456\",\"B:52A\"]}"
+  -F "user_params={\"integrations\":{\"boltzgen\":{\"enabled\":true,\"protocol\":\"nanobody-anything\",\"num_designs\":50}}}"
 ```
 
-**Enabling external integrations (RFantibody/BoltzGen):**
-```bash
-curl -X POST "http://localhost:8000/submit" \
-  -F "mode=separate" \
-  -F "vhh_file=@samples/vhh_sample.pdb" \
-  -F "target_file=@samples/target_sample.pdb" \
-  -F "user_params={\"integrations\":{\"rfantibody\":{\"enabled\":true,\"num_designs\":20}}}"
-```
-
-### Query Results
+#### 4. Query Results
 
 ```bash
+# Get task status and results
 curl "http://localhost:8000/result/{task_id}"
+
+# Download generated configuration files
+curl "http://localhost:8000/download/{task_id}/rfantibody_config" -o config.yaml
 ```
 
-Response example:
-```json
-{
-  "task_id": "abc123def456",
-  "status": "succeeded",
-  "result_metadata": {
-    "structure_path": "/tmp/submissions/abc123def456/predicted.pdb",
-    "scores_csv": "/tmp/submissions/abc123def456/scores.csv",
-    "scores_tsv": "/tmp/submissions/abc123def456/scores.tsv",
-    "cdr_json": "/tmp/submissions/abc123def456/cdr_annotations.json",
-    "cdr_csv": "/tmp/submissions/abc123def456/cdr_annotations.csv",
-    "summary_score": 0.8,
-    "numbering_scheme": "chothia",
-    "cdr_summary": {
-      "scheme": "chothia",
-      "chains": [
-        {
-          "chain_id": "H",
-          "cdrs": [
-            {
-              "name": "CDR1",
-              "start": "26",
-              "end": "32",
-              "sequence": "GFTFNTY"
-            }
-          ]
-        }
-      ]
+## Adding New Tool Integrations
+
+AbDesign is designed with an extensible architecture. Adding a new tool requires only three steps:
+
+### Step 1: Create Tool Adapter
+
+Create a new file in the `integrations/` directory, e.g., `newtool.py`:
+
+```python
+from pathlib import Path
+from typing import Dict, Any
+
+def run_newtool(
+    task_dir: Path,
+    input_structure: Path,
+    config: Dict[str, Any],
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Adapter function for the new tool
+    
+    Args:
+        task_dir: Task working directory
+        input_structure: Input structure file
+        config: Tool configuration parameters
+    
+    Returns:
+        Dictionary containing output file paths and metadata
+    """
+    # 1. Generate tool-specific configuration file
+    config_path = task_dir / "newtool_config.yaml"
+    # ... write configuration
+    
+    # 2. Execute tool (Docker or direct invocation)
+    # ... invoke command
+    
+    # 3. Collect and return results
+    return {
+        "status": "success",
+        "output_files": [...],
+        "metadata": {...}
     }
-  }
-}
 ```
 
-### Download Files
+### Step 2: Integrate into Pipeline
 
-```bash
-# Download predicted structure
-curl "http://localhost:8000/download/{task_id}/structure" -o predicted.pdb
+Add integration point in `pipeline/runner.py`:
 
-# Download CDR annotations (JSON)
-curl "http://localhost:8000/download/{task_id}/cdr_annotations_json" -o cdr.json
+```python
+from integrations.newtool import run_newtool
 
-# Download CDR annotations (CSV)
-curl "http://localhost:8000/download/{task_id}/cdr_annotations_csv" -o cdr.csv
+# Add configuration in IntegrationConfig
+@dataclass
+class NewToolIntegrationConfig:
+    enabled: bool = False
+    param1: str = "default"
+    # ... other parameters
 
-# Download scores
-curl "http://localhost:8000/download/{task_id}/scores_csv" -o scores.csv
+# Call in run_pipeline function
+if config.integrations.newtool.enabled:
+    newtool_result = run_newtool(
+        task_dir=config.output_dir,
+        input_structure=inputs.get("structure"),
+        config=config.integrations.newtool
+    )
 ```
+
+### Step 3: Update API Schema
+
+Add configuration model in `api/schemas.py`:
+
+```python
+class NewToolConfig(BaseModel):
+    enabled: bool = False
+    param1: Optional[str] = None
+```
+
+That's it! The new tool can now be invoked via the API.
 
 ## Configuration Options
 
-Configure system behavior through environment variables:
+Main configuration via environment variables:
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
@@ -316,196 +311,104 @@ Configure system behavior through environment variables:
 | `QUEUE_NAME` | `default` | Task queue name |
 | `MAX_FILE_SIZE` | `52428800` (50MB) | Maximum file size |
 | `API_KEY` | Empty string | API access key (optional) |
-| `CORS_ORIGINS` | `*` | Allowed CORS origins |
-| `RATE_LIMIT_PER_MINUTE` | `30` | Request rate limit per minute |
 
-Example:
-```bash
-export STORAGE_ROOT=/var/abdesign/data
-export API_KEY=my_secret_key
-export RATE_LIMIT_PER_MINUTE=60
-uvicorn api.main:app --host 0.0.0.0 --port 8000
-```
+For detailed API documentation and configuration options, see [DEVELOPMENT.md](DEVELOPMENT.md)
 
 ## Project Structure
 
 ```
 AbDesign/
-├── api/                    # FastAPI Web Service
-│   ├── main.py            # Main application and routes
-│   ├── config.py          # Configuration management
-│   ├── schemas.py         # Data models
-│   ├── storage.py         # File storage
-│   ├── task_store.py      # Task state management
-│   ├── validators.py      # Input validation
-│   └── results.py         # Result processing
-├── pipeline/              # Core analysis pipeline
-│   ├── runner.py          # Pipeline orchestrator
-│   ├── cdr.py             # CDR annotation logic
-│   └── epitope/           # Epitope/hotspot processing
-│       ├── standardize.py # Structure standardization
-│       ├── mapping.py     # Residue mapping
-│       ├── exporters.py   # Format exporters
-│       └── spec.py        # Specification definitions
-├── integrations/          # External tool integrations
+├── integrations/          # 🔧 Tool Adapters (Core)
 │   ├── rfantibody.py      # RFantibody adapter
 │   ├── boltzgen.py        # BoltzGen adapter
 │   └── normalize.py       # Standardization utilities
-├── worker/                # Background task processing
-│   ├── worker.py          # Worker main program
-│   ├── tasks.py           # Task definitions
-│   └── queue.py           # Queue management
-├── scripts/               # Utility scripts
-│   ├── smoke_test.py      # Smoke test
-│   ├── selftest.py        # Quick self-check
-│   ├── resolve_hotspots.py # Hotspot resolution tool
-│   └── verify_abnumber.py # Upstream AbNumber verification
-├── tests/                 # Test suite
-│   ├── test_*_integration.py  # Integration tests
-│   ├── test_hotspot_*.py      # Hotspot processing tests
-│   └── data/              # Test data
-├── samples/               # Sample files
-│   ├── vhh_sample.pdb     # VHH sample structure
-│   └── target_sample.pdb  # Target sample structure
-├── requirements.txt       # Python dependencies
-├── Makefile              # Quick commands
-├── start_uvicorn.sh       # Startup script
-├── TESTING.md            # Testing guide
-├── ARCHITECTURE.md       # Architecture documentation
-├── DEVELOPMENT.md        # Development guide
-└── README.md             # This file
+├── pipeline/              # 📋 Supporting Processing Modules
+│   ├── runner.py          # Pipeline orchestrator
+│   ├── cdr.py             # CDR annotation
+│   └── epitope/           # Structure standardization & mapping
+├── api/                   # 🌐 Web Interface
+├── worker/                # ⚙️ Asynchronous Task Processing
+├── scripts/               # 🛠️ Utility Scripts
+├── tests/                 # ✅ Test Suite
+└── samples/               # 📁 Sample Files
 ```
 
 ## Key Dependencies
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `fastapi` | 0.115.5 | Web framework |
-| `uvicorn` | 0.32.0 | ASGI server |
-| `redis` | 5.2.1 | Redis client |
-| `rq` | 1.16.2 | Task queue |
-| `abnumber[anarci]` | 0.4.4 | Antibody numbering and CDR recognition (with ANARCI) |
-| `biopython` | 1.84 | Bioinformatics tools |
-| `gemmi` | 0.6.8 | Structure file parsing |
+| Package | Purpose |
+|---------|---------|
+| `fastapi` + `uvicorn` | Web service framework |
+| `redis` + `rq` | Asynchronous task queue |
+| `gemmi` | Structure file parsing |
+| `abnumber[anarci]` | CDR recognition and numbering |
+| `biopython` | Bioinformatics tools |
 
-## Development Features
+## Testing and Validation
 
-### Middleware
-- **CORS**: Cross-origin request support
-- **Logging**: Log all requests and response times
-- **Exception Handling**: Unified error response format
-
-### Security Features
-- **API Key Authentication**: Optional API key protection
-- **Rate Limiting**: Request frequency control to prevent abuse
-- **File Validation**: Strict file type and size limits
-
-### Scalability
-- **Modular Design**: Loosely coupled components, easy to extend
-- **Reserved Interfaces**: 
-  - Structure alignment module (to be implemented)
-  - Binding site prediction (to be implemented)
-  - Scoring model (to be implemented)
-- **Configuration-driven**: Flexible configuration through environment variables
-
-## CDR Numbering Schemes
-
-Supported numbering schemes:
-- **Chothia** (default): Improved version of Kabat, widely used in antibody engineering
-- **IMGT**: International ImMunoGeneTics information system standard
-- **Kabat**: Classic antibody numbering system
-- **AHo**: Another commonly used scheme
-- **Martin**: Structure-based alignment numbering
-
-## Troubleshooting
-
-### 1. Worker Cannot Receive Tasks
-**Cause**: Redis not started or incorrect connection configuration
-
-**Solution**:
 ```bash
-# Check if Redis is running
+# Quick self-check (no services needed)
+make selftest
+
+# Full test (requires services running)
+python scripts/smoke_test.py --base-url http://localhost:8000
+
+# Unit tests
+pytest
+```
+
+For detailed testing guide, see [TESTING.md](TESTING.md)
+
+## Frequently Asked Questions
+
+### Tool Integration Related
+
+**Q: How to confirm if RFantibody/BoltzGen is available?**
+
+Check Docker images or direct invocation:
+```bash
+docker images | grep rfantibody
+docker images | grep boltzgen
+```
+
+**Q: How to view generated configuration files?**
+
+Configuration files are saved in the task directory and can be obtained via download endpoint:
+```bash
+curl "http://localhost:8000/download/{task_id}/rfantibody_config" -o config.yaml
+```
+
+**Q: Can multiple tools run simultaneously?**
+
+Yes, multiple integrations can be enabled in `user_params`:
+```json
+{
+  "integrations": {
+    "rfantibody": {"enabled": true, "num_designs": 20},
+    "boltzgen": {"enabled": true, "num_designs": 50}
+  }
+}
+```
+
+### Service Running Related
+
+**Q: Redis connection failed?**
+
+Check if Redis is running and confirm connection address:
+```bash
 ps aux | grep redis-server
-
-# Test connection
-redis-cli ping
-# Should return PONG
-
-# Ensure environment variables are consistent
-echo $REDIS_URL
+redis-cli ping  # Should return PONG
 ```
 
-### 2. Port Conflict
-**Solution**:
+**Q: How to view task logs?**
+
+Worker logs contain detailed execution information:
 ```bash
-# Use a different port
-uvicorn api.main:app --port 8080
-
-# Update test script
-python scripts/smoke_test.py --base-url http://localhost:8080
-```
-
-### 3. CDR Annotation Failure
-**Common causes**:
-- Incorrect structure file format
-- Missing ATOM records
-- Sequence not recognizable as antibody
-
-**Debugging**:
-```bash
-# View task logs
+# View real-time logs in worker terminal
+# Or view log file (if configured)
 tail -f worker.log
-
-# Check structure file
-python -c "import gemmi; print(gemmi.read_structure('your_file.pdb'))"
 ```
 
-### 4. Clean Up Historical Tasks
-```bash
-# Delete task state
-rm -f /tmp/task_state.json
-
-# Clean storage directory
-rm -rf /tmp/submissions/*
-```
-
-## Extension Development
-
-### Add New Analysis Module
-
-1. Create a new module in `pipeline/`
-2. Integrate in `runner.py`
-3. Update `PipelineConfig` and `PipelineResult`
-
-Example:
-```python
-# pipeline/new_module.py
-def analyze_something(inputs):
-    # Your analysis logic
-    return result
-
-# pipeline/runner.py
-from pipeline.new_module import analyze_something
-
-def run_pipeline(mode, inputs):
-    # ...
-    new_result = analyze_something(inputs)
-    # ...
-```
-
-### Add New API Endpoint
-
-```python
-# api/main.py
-@app.get("/custom-endpoint/{task_id}")
-async def custom_handler(task_id: str):
-    # Your handler logic
-    return {"result": "data"}
-```
-
-## Testing
-
-See [TESTING.md](TESTING.md) for detailed testing guide.
+For more technical details and API documentation, see [DEVELOPMENT.md](DEVELOPMENT.md)
 
 ## License
 
