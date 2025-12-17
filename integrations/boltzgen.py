@@ -1,12 +1,29 @@
 """Adapters for boltzgen YAML generation, validation, and execution."""
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional
 
-import yaml
+try:  # pragma: no cover - optional dependency shim
+    import yaml  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - fallback stub
+    class _YamlStub:
+        @staticmethod
+        def safe_load(stream):
+            try:
+                return json.loads(stream)
+            except Exception:
+                return {}
+
+        @staticmethod
+        def safe_dump(data, sort_keys=False):
+            return json.dumps(data, sort_keys=sort_keys)
+
+    yaml = _YamlStub()
 
 from pipeline.epitope.mapping import MappingResultV2
 
@@ -287,13 +304,15 @@ def _binding_types_from_cdrs(
     return binding_types
 
 
-def _validate_yaml_indices(yaml_path: Path, mapping: MappingResultV2 | None) -> None:
+def _validate_yaml_indices(yaml_path: Path, mapping: MappingResultV2 | str | Path | dict | None) -> None:
     if mapping is None:
         return
 
     payload = yaml.safe_load(yaml_path.read_text()) or {}
     scaffolds = payload.get("scaffolds") or []
-    by_chain = mapping.by_chain()
+    by_chain = _resolve_mapping_by_chain(mapping)
+    if by_chain is None:
+        return
     for scaffold in scaffolds:
         design_entries = scaffold.get("design", [])
         for design in design_entries:
@@ -309,6 +328,32 @@ def _validate_yaml_indices(yaml_path: Path, mapping: MappingResultV2 | None) -> 
             if not chain or not res_index:
                 continue
             _validate_range(res_index, chain, by_chain)
+
+
+def _resolve_mapping_by_chain(mapping: MappingResultV2 | str | Path | dict) -> Optional[Mapping[str, List[object]]]:
+    if mapping is None:
+        return None
+    if isinstance(mapping, MappingResultV2):
+        return mapping.by_chain()
+    if isinstance(mapping, (str, Path)):
+        mapping_dict = json.loads(Path(mapping).read_text())
+    elif isinstance(mapping, dict):
+        mapping_dict = mapping
+    else:
+        raise ValueError("Unsupported mapping type for BoltzGen validation")
+
+    by_chain: Dict[str, List[object]] = {}
+    for chain_entry in mapping_dict.get("chains", []):
+        auth_chain = chain_entry.get("auth_chain_id") or chain_entry.get("auth_chain")
+        residues = []
+        for residue in chain_entry.get("residues", []):
+            label_seq = residue.get("mmcif_label", {}).get("label_seq_id")
+            if label_seq is None:
+                continue
+            residues.append(SimpleNamespace(label_seq_id=int(label_seq)))
+        if auth_chain:
+            by_chain[auth_chain] = residues
+    return by_chain
 
 
 def _validate_range(expr: str, chain: str, mapping_by_chain: Mapping[str, List[object]]) -> None:

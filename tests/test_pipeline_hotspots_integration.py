@@ -5,6 +5,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("gemmi")
+
 from pipeline.runner import run_pipeline
 
 

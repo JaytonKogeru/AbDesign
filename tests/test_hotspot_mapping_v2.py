@@ -1,6 +1,10 @@
 import tempfile
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("gemmi")
+
 from pipeline.epitope.mapping import build_residue_mapping_v2, resolve_hotspots_v2
 from pipeline.epitope.spec import ResidueRefAuth
 from pipeline.epitope.standardize import standardize_structure
