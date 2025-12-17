@@ -1,7 +1,7 @@
 .PHONY: test selftest
 
 test:
-pytest
+	pytest
 
 selftest:
-python scripts/selftest.py
+	python scripts/selftest.py

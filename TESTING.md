@@ -32,14 +32,14 @@ python -m unittest tests/test_abnumber_integration.py
 ```
 
 ### 快速自检（无需 API/Redis/worker）
-克隆仓库后即可运行内置自检，验证标准化、hotspot v2 映射与解析：
+克隆仓库后即可运行内置自检，验证标准化、热点映射（v2 schema）与解析：
 
 ```bash
 pip install -r requirements.txt
 make selftest
 ```
 
-该命令会标准化 `tests/data/hotspot_sample.pdb`，生成 `target_residue_mapping_v2.json` 与 `target_hotspots_resolved_v2.json` 并检查字段完备性。
+该命令会标准化 `tests/data/hotspot_sample.pdb`，生成 `target_residue_mapping.json` 与 `target_hotspots_resolved.json` 并检查字段完备性。
 ```
 
 ## 启动服务与 Worker

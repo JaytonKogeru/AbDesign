@@ -5,35 +5,10 @@ import datetime as _dt
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
-from pipeline.epitope.standardize import StandardizedStructure, standardize_structure
-from pipeline.epitope.spec import ResidueRefAuth, ResidueRefCanonical
-
-_STANDARD_RESIDUES = {
-    "ALA": "A",
-    "ARG": "R",
-    "ASN": "N",
-    "ASP": "D",
-    "CYS": "C",
-    "GLN": "Q",
-    "GLU": "E",
-    "GLY": "G",
-    "HIS": "H",
-    "ILE": "I",
-    "LEU": "L",
-    "LYS": "K",
-    "MET": "M",
-    "PHE": "F",
-    "PRO": "P",
-    "SER": "S",
-    "THR": "T",
-    "TRP": "W",
-    "TYR": "Y",
-    "VAL": "V",
-    "SEC": "U",
-    "PYL": "O",
-}
+from pipeline.epitope.standardize import StandardizedStructure
+from pipeline.epitope.spec import ResidueRefAuth
 
 _SCOPE_ALLOWED = {
     "protein": {"protein"},
@@ -44,78 +19,6 @@ _SCOPE_ALLOWED = {
 
 class MappingError(RuntimeError):
     """Raised when mapping cannot be completed."""
-
-
-@dataclass(frozen=True)
-class MappingResidue:
-    auth: ResidueRefAuth
-    canonical: ResidueRefCanonical
-    resname3: str
-    resname1: Optional[str]
-
-    def to_dict(self) -> Dict[str, object]:
-        return {
-            "auth": asdict(self.auth),
-            "canonical": asdict(self.canonical),
-            "resname3": self.resname3,
-            "resname1": self.resname1,
-        }
-
-
-@dataclass
-class MappingResult:
-    residues: List[MappingResidue]
-
-    def __post_init__(self) -> None:
-        self._by_auth: Dict[Tuple[str, int, str], MappingResidue] = {
-            (res.auth.chain, res.auth.resi, res.auth.ins): res for res in self.residues
-        }
-
-    def get(self, ref: ResidueRefAuth) -> Optional[MappingResidue]:
-        return self._by_auth.get((ref.chain, ref.resi, ref.ins))
-
-    def by_chain(self) -> Mapping[str, List[MappingResidue]]:
-        chains: MutableMapping[str, List[MappingResidue]] = {}
-        for residue in self.residues:
-            chains.setdefault(residue.auth.chain, []).append(residue)
-        return chains
-
-    def to_dict(self) -> Dict[str, object]:
-        return {"residues": [residue.to_dict() for residue in self.residues]}
-
-    def write_json(self, path: Path) -> None:
-        path.write_text(json.dumps(self.to_dict(), indent=2))
-
-
-@dataclass(frozen=True)
-class ResolvedHotspot:
-    auth: ResidueRefAuth
-    canonical: ResidueRefCanonical
-    resname3: Optional[str] = None
-    resname1: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, object]:
-        return {
-            "auth": asdict(self.auth),
-            "canonical": asdict(self.canonical),
-            "resname3": self.resname3,
-            "resname1": self.resname1,
-        }
-
-
-@dataclass
-class ResolveResult:
-    resolved: List[ResolvedHotspot]
-    errors: List[str]
-
-    def to_dict(self) -> Dict[str, object]:
-        return {
-            "resolved": [hotspot.to_dict() for hotspot in self.resolved],
-            "errors": self.errors,
-        }
-
-    def write_json(self, path: Path) -> None:
-        path.write_text(json.dumps(self.to_dict(), indent=2))
 
 
 @dataclass(frozen=True)
@@ -388,65 +291,4 @@ def _missing_residue_payload(hotspot: ResidueRefAuth, chain_map: Mapping[str, Li
         "hint": hint,
     }
 
-
-def build_residue_mapping(structure_path: Path) -> MappingResult:
-    standardized = standardize_structure(structure_path, Path(structure_path).parent)
-    mapping_v2 = build_residue_mapping_v2(standardized)
-    return mapping_v1_from_v2(mapping_v2)
-
-
-def mapping_v1_from_v2(mapping_v2: MappingResultV2) -> MappingResult:
-    residues: List[MappingResidue] = []
-    for res in mapping_v2.residues:
-        if res.resname3 not in _STANDARD_RESIDUES:
-            continue
-        residues.append(
-            MappingResidue(
-                auth=res.auth,
-                canonical=ResidueRefCanonical(chain=res.auth.chain, seq_id=res.present_seq_id),
-                resname3=res.resname3,
-                resname1=_STANDARD_RESIDUES.get(res.resname3),
-            )
-        )
-    return MappingResult(residues)
-
-
-def resolve_hotspots(auth_hotspots: Sequence[ResidueRefAuth], mapping: MappingResult) -> ResolveResult:
-    resolved: List[ResolvedHotspot] = []
-    errors: List[str] = []
-    chain_map = mapping.by_chain()
-
-    for hotspot in auth_hotspots:
-        mapping_residue = mapping.get(hotspot)
-        if mapping_residue:
-            resolved.append(
-                ResolvedHotspot(
-                    auth=hotspot,
-                    canonical=mapping_residue.canonical,
-                    resname3=mapping_residue.resname3,
-                    resname1=mapping_residue.resname1,
-                )
-            )
-            continue
-
-        chain_residues = chain_map.get(hotspot.chain)
-        if chain_residues:
-            available = ", ".join(_format_auth_token(res.auth) for res in chain_residues[:25])
-            if len(chain_residues) > 25:
-                available += ", ..."
-            errors.append(
-                f"Hotspot {_format_auth_token(hotspot)} not found on chain {hotspot.chain}. Available residues: {available}"
-            )
-        else:
-            available_chains = ", ".join(sorted(chain_map.keys())) or "none"
-            errors.append(
-                f"Chain {hotspot.chain} not present in structure for hotspot {_format_auth_token(hotspot)}. Available chains: {available_chains}"
-            )
-
-    return ResolveResult(resolved=resolved, errors=errors)
-
-
-def _format_auth_token(ref: ResidueRefAuth) -> str:
-    suffix = ref.ins or ""
-    return f"{ref.chain}:{ref.resi}{suffix}"
 
