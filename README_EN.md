@@ -314,7 +314,7 @@ AbDesign/
 | `uvicorn` | 0.32.0 | ASGI server |
 | `redis` | 5.2.1 | Redis client |
 | `rq` | 1.16.2 | Task queue |
-| `abnumber[anarci]` | 0.3.1 | Antibody numbering and CDR recognition (with ANARCI) |
+| `abnumber[anarci]` | 0.4.4 | Antibody numbering and CDR recognition (with ANARCI) |
 | `biopython` | 1.84 | Bioinformatics tools |
 | `gemmi` | 0.6.8 | Structure file parsing |
 
