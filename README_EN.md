@@ -26,17 +26,30 @@ The above documents are the canonical entry points; no extra summary or index fi
 - Precise numbering based on [AbNumber](https://github.com/prihoda/abnumber) library
 - Output in JSON and CSV formats
 
-### 2. Structure Analysis
+### 2. Structure Analysis and Standardization
 - Support for PDB and mmCIF format structure files
 - Two submission modes:
   - **separate mode**: Upload VHH and target structures separately
   - **complex mode**: Upload complex structure
 - Automatic sequence and chain information extraction
+- Structure standardization processing, generating normalized mmCIF format
+- Residue mapping functionality supporting auth and label identifier conversion
 
-### 3. Asynchronous Task Processing
+### 3. Epitope/Hotspot Processing
+- Support for user-specified target hotspot residues (via `target_hotspots` parameter)
+- Hotspot residue parsing and standardization
+- Generation of residue mapping files (v2 schema)
+- Export hotspot annotations in multiple formats (REMARK, HLT, JSON)
+
+### 4. Asynchronous Task Processing
 - Task queue system based on Redis and RQ (Redis Queue)
 - Support for long-running computational tasks
 - Real-time task status queries
+
+### 5. External Tool Integration (Optional)
+- **RFantibody Integration**: Support for RFdiffusion-driven antibody design
+- **BoltzGen Integration**: Support for Boltz-1 based structure prediction
+- Flexible configuration options and Docker containerization support
 
 ## Technical Architecture
 
@@ -82,9 +95,15 @@ The above documents are the canonical entry points; no extra summary or index fi
   - Binding site prediction (interface reserved)
   - Scoring model (mock implementation)
   - CDR annotation (full implementation)
+  - External tool integration (RFantibody, BoltzGen)
 - **cdr.py**: Core CDR annotation logic
   - Uses gemmi for structure parsing
   - Uses abnumber for CDR identification
+- **epitope/**: Epitope and hotspot processing module
+  - **standardize.py**: Structure standardization, generates canonical mmCIF
+  - **mapping.py**: Residue mapping and hotspot parsing
+  - **exporters.py**: Multi-format export (REMARK, HLT)
+  - **spec.py**: Hotspot specification definitions
 
 #### 3. Worker Process (`worker/`)
 - **worker.py**: RQ worker main program
@@ -93,6 +112,20 @@ The above documents are the canonical entry points; no extra summary or index fi
 
 #### 4. AbNumber Integration (upstream PyPI package)
 - Relies on upstream `abnumber[anarci]` from PyPI for full ANARCI numbering
+
+#### 5. External Tool Integration Layer (`integrations/`)
+- **rfantibody.py**: RFantibody/RFdiffusion workflow adapter
+  - Docker containerized execution
+  - Hotspot-driven antibody design
+  - Configurable design parameters
+- **boltzgen.py**: BoltzGen (Boltz-1) workflow adapter
+  - YAML configuration generation
+  - Nanobody-target prediction
+  - Batch design support
+- **normalize.py**: Structure standardization and derived artifact generation
+  - Automated standardization workflow
+  - CDR annotation integration
+  - Residue mapping generation
 
 ## Installation and Deployment
 
@@ -149,11 +182,21 @@ python -m worker.worker
 #### 3. Run Tests
 
 ```bash
-# Smoke test
+# Quick self-check (no services needed)
+make selftest
+# or
+python scripts/selftest.py
+
+# Full smoke test (requires services running)
 python scripts/smoke_test.py --base-url http://localhost:8000
 
 # With API Key (if enabled)
 python scripts/smoke_test.py --base-url http://localhost:8000 --api-key YOUR_KEY
+
+# Run unit tests
+pytest
+# or
+make test
 ```
 
 ## API Usage Examples
@@ -196,6 +239,15 @@ curl -X POST "http://localhost:8000/submit" \
   -F "vhh_file=@samples/vhh_sample.pdb" \
   -F "target_file=@samples/target_sample.pdb" \
   -F "user_params={\"target_hotspots\":[\"A:305\",\"A:456\",\"B:52A\"]}"
+```
+
+**Enabling external integrations (RFantibody/BoltzGen):**
+```bash
+curl -X POST "http://localhost:8000/submit" \
+  -F "mode=separate" \
+  -F "vhh_file=@samples/vhh_sample.pdb" \
+  -F "target_file=@samples/target_sample.pdb" \
+  -F "user_params={\"integrations\":{\"rfantibody\":{\"enabled\":true,\"num_designs\":20}}}"
 ```
 
 ### Query Results
@@ -289,20 +341,38 @@ AbDesign/
 │   └── results.py         # Result processing
 ├── pipeline/              # Core analysis pipeline
 │   ├── runner.py          # Pipeline orchestrator
-│   └── cdr.py             # CDR annotation logic
+│   ├── cdr.py             # CDR annotation logic
+│   └── epitope/           # Epitope/hotspot processing
+│       ├── standardize.py # Structure standardization
+│       ├── mapping.py     # Residue mapping
+│       ├── exporters.py   # Format exporters
+│       └── spec.py        # Specification definitions
+├── integrations/          # External tool integrations
+│   ├── rfantibody.py      # RFantibody adapter
+│   ├── boltzgen.py        # BoltzGen adapter
+│   └── normalize.py       # Standardization utilities
 ├── worker/                # Background task processing
 │   ├── worker.py          # Worker main program
 │   ├── tasks.py           # Task definitions
 │   └── queue.py           # Queue management
 ├── scripts/               # Utility scripts
 │   ├── smoke_test.py      # Smoke test
+│   ├── selftest.py        # Quick self-check
+│   ├── resolve_hotspots.py # Hotspot resolution tool
 │   └── verify_abnumber.py # Upstream AbNumber verification
+├── tests/                 # Test suite
+│   ├── test_*_integration.py  # Integration tests
+│   ├── test_hotspot_*.py      # Hotspot processing tests
+│   └── data/              # Test data
 ├── samples/               # Sample files
 │   ├── vhh_sample.pdb     # VHH sample structure
 │   └── target_sample.pdb  # Target sample structure
 ├── requirements.txt       # Python dependencies
+├── Makefile              # Quick commands
 ├── start_uvicorn.sh       # Startup script
 ├── TESTING.md            # Testing guide
+├── ARCHITECTURE.md       # Architecture documentation
+├── DEVELOPMENT.md        # Development guide
 └── README.md             # This file
 ```
 

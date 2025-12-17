@@ -129,7 +129,13 @@ class PipelineConfig:
     alignment: AlignmentConfig       # 对齐配置
     binding_site: BindingSiteConfig  # 结合位点配置
     scoring: ScoringConfig           # 打分配置
+    integrations: IntegrationConfig  # 外部集成配置
     keep_intermediates: bool         # 是否保留中间文件
+
+@dataclass
+class IntegrationConfig:
+    rfantibody: RFantibodyIntegrationConfig  # RFantibody 配置
+    boltzgen: BoltzgenIntegrationConfig      # BoltzGen 配置
 
 @dataclass
 class PipelineResult:
@@ -140,6 +146,8 @@ class PipelineResult:
     binding_site_prediction: Dict    # 结合位点预测
     scoring: Dict[str, Any]          # 打分详情
     cdr_annotation: Dict[str, Any]   # CDR 标注结果
+    hotspot_mapping: Dict[str, Any]  # 热点映射结果
+    integrations: Dict[str, Any]     # 外部集成结果
     config: Dict[str, Any]           # 使用的配置
 ```
 
@@ -222,6 +230,175 @@ def get_redis_connection() -> Redis:
     
 def get_queue(name: str, connection: Redis = None) -> Queue:
     """获取或创建队列实例"""
+```
+
+#### 4. 表位/热点处理模块 (`pipeline/epitope/`)
+
+**standardize.py** - 结构标准化
+```python
+@dataclass(frozen=True)
+class StandardizedStructure:
+    input_path: Path                 # 输入文件路径
+    input_format: str                # 输入格式（pdb/mmcif）
+    standardized_path: Path          # 标准化后文件路径
+    chain_id_map: Dict[str, str]     # auth -> label 链映射
+
+def standardize_structure(input_path: Path, out_dir: Path) -> StandardizedStructure:
+    """
+    读取 PDB/mmCIF 文件并生成标准化的 mmCIF 副本
+    
+    功能：
+    1. 检测输入格式
+    2. 使用 gemmi 解析结构
+    3. 生成规范化的 mmCIF 格式
+    4. 提取链标识符映射（auth_asym_id -> label_asym_id）
+    """
+```
+
+**mapping.py** - 残基映射
+```python
+@dataclass(frozen=True)
+class MappingResidueV2:
+    auth: ResidueRefAuth             # auth 标识符（chain, resi, ins）
+    present_seq_id: int              # 在结构中的序号
+    label_asym_id: str               # mmCIF label 链标识符
+    label_seq_id: int                # mmCIF label 序列号
+    resname3: str                    # 三字母残基名
+    category: str                    # 实体类型（protein/nucleic/hetero）
+
+@dataclass
+class MappingResultV2:
+    residues: List[MappingResidueV2] # 所有残基的映射
+    standardized: StandardizedStructure # 标准化结构信息
+    generated_at: str                # 生成时间戳
+
+def build_residue_mapping_v2(std: StandardizedStructure) -> MappingResultV2:
+    """构建残基映射表，支持 auth -> label 转换"""
+
+def resolve_hotspots_v2(
+    hotspots: List[ResidueRefAuth],
+    mapping: MappingResultV2
+) -> ResolveResultV2:
+    """解析用户提供的热点残基，转换为标准格式"""
+```
+
+**exporters.py** - 格式导出
+```python
+def export_hlt_pdb_remarks(
+    resolved: ResolveResultV2,
+    output_path: Path
+) -> None:
+    """导出 PDB REMARK 格式的热点标注"""
+
+def export_hlt_format(
+    resolved: ResolveResultV2,
+    output_path: Path
+) -> None:
+    """导出 HLT 格式的热点标注"""
+```
+
+**spec.py** - 规范定义
+```python
+@dataclass(frozen=True)
+class ResidueRefAuth:
+    chain: str                       # 链标识符
+    resi: int                        # 残基序号
+    ins: str                         # 插入码
+
+def normalize_target_hotspots(raw: Any) -> List[ResidueRefAuth]:
+    """
+    标准化用户输入的热点格式
+    
+    支持格式：
+    - 字符串: "A:305", "B:52A"
+    - 字典: {"chain": "A", "resi": 305, "ins": ""}
+    """
+```
+
+#### 5. 外部工具集成模块 (`integrations/`)
+
+**rfantibody.py** - RFantibody 集成
+```python
+def run_rfantibody(
+    task_dir: Path,
+    hlt_path: Path,
+    target_path: Path,
+    hotspots_resolved: Optional[List[Dict]] = None,
+    design_loops: Optional[Sequence] = None,
+    num_designs: int = 20,
+    use_docker: bool = True,
+    docker_image: str = "rfantibody",
+    timeout: int = 3600,
+    retries: int = 1
+) -> Dict[str, object]:
+    """
+    执行 RFantibody/RFdiffusion 推理
+    
+    功能：
+    1. 准备输入文件和热点信息
+    2. 构建 Docker 命令或直接调用
+    3. 执行抗体设计任务
+    4. 收集输出结果
+    5. 处理重试和超时
+    """
+```
+
+**boltzgen.py** - BoltzGen 集成
+```python
+def generate_boltzgen_yaml(
+    mapping: MappingResultV2,
+    protocol: str = "nanobody-anything",
+    num_designs: int = 50
+) -> str:
+    """生成 BoltzGen 所需的 YAML 配置"""
+
+def run_boltzgen(
+    task_dir: Path,
+    yaml_path: Path,
+    protocol: str = "nanobody-anything",
+    num_designs: int = 50,
+    mapping: MappingResultV2 = None,
+    use_docker: bool = True,
+    docker_image: str = "boltzgen",
+    timeout: int = 3600,
+    retries: int = 1
+) -> Dict[str, object]:
+    """
+    执行 BoltzGen（Boltz-1）预测
+    
+    功能：
+    1. 生成或加载 YAML 配置
+    2. 设置 Docker 环境
+    3. 执行批量预测
+    4. 收集和验证输出
+    """
+```
+
+**normalize.py** - 标准化工作流
+```python
+def normalize_and_derive(
+    scaffold_path: str,
+    target_path: str,
+    output_dir: str,
+    numbering_scheme: str = "chothia",
+    chain_role_map: Optional[Dict[str, str]] = None
+) -> Dict[str, object]:
+    """
+    执行完整的标准化和衍生工件生成流程
+    
+    步骤：
+    1. 标准化 scaffold 和 target 结构
+    2. 构建残基映射
+    3. 执行 CDR 标注
+    4. 生成热点解析结果
+    5. 导出各种格式的标注文件
+    
+    输出：
+    - 标准化的 mmCIF 文件
+    - 残基映射 JSON
+    - CDR 标注（JSON/CSV）
+    - 热点解析结果
+    """
 ```
 
 ### 技术选型理由
@@ -433,7 +610,13 @@ class PipelineConfig:
     alignment: AlignmentConfig       # Alignment config
     binding_site: BindingSiteConfig  # Binding site config
     scoring: ScoringConfig           # Scoring config
+    integrations: IntegrationConfig  # External integrations config
     keep_intermediates: bool         # Keep intermediate files
+
+@dataclass
+class IntegrationConfig:
+    rfantibody: RFantibodyIntegrationConfig  # RFantibody config
+    boltzgen: BoltzgenIntegrationConfig      # BoltzGen config
 
 @dataclass
 class PipelineResult:
@@ -444,6 +627,8 @@ class PipelineResult:
     binding_site_prediction: Dict    # Binding site predictions
     scoring: Dict[str, Any]          # Scoring details
     cdr_annotation: Dict[str, Any]   # CDR annotation results
+    hotspot_mapping: Dict[str, Any]  # Hotspot mapping results
+    integrations: Dict[str, Any]     # External integration results
     config: Dict[str, Any]           # Configuration used
 ```
 
@@ -526,6 +711,175 @@ def get_redis_connection() -> Redis:
     
 def get_queue(name: str, connection: Redis = None) -> Queue:
     """Get or create queue instance"""
+```
+
+#### 4. Epitope/Hotspot Processing Module (`pipeline/epitope/`)
+
+**standardize.py** - Structure Standardization
+```python
+@dataclass(frozen=True)
+class StandardizedStructure:
+    input_path: Path                 # Input file path
+    input_format: str                # Input format (pdb/mmcif)
+    standardized_path: Path          # Standardized file path
+    chain_id_map: Dict[str, str]     # auth -> label chain mapping
+
+def standardize_structure(input_path: Path, out_dir: Path) -> StandardizedStructure:
+    """
+    Read PDB/mmCIF file and generate standardized mmCIF copy
+    
+    Features:
+    1. Detect input format
+    2. Parse structure using gemmi
+    3. Generate canonical mmCIF format
+    4. Extract chain identifier mapping (auth_asym_id -> label_asym_id)
+    """
+```
+
+**mapping.py** - Residue Mapping
+```python
+@dataclass(frozen=True)
+class MappingResidueV2:
+    auth: ResidueRefAuth             # auth identifier (chain, resi, ins)
+    present_seq_id: int              # Sequential number in structure
+    label_asym_id: str               # mmCIF label chain identifier
+    label_seq_id: int                # mmCIF label sequence number
+    resname3: str                    # Three-letter residue name
+    category: str                    # Entity type (protein/nucleic/hetero)
+
+@dataclass
+class MappingResultV2:
+    residues: List[MappingResidueV2] # Mapping for all residues
+    standardized: StandardizedStructure # Standardized structure info
+    generated_at: str                # Generation timestamp
+
+def build_residue_mapping_v2(std: StandardizedStructure) -> MappingResultV2:
+    """Build residue mapping table, supporting auth -> label conversion"""
+
+def resolve_hotspots_v2(
+    hotspots: List[ResidueRefAuth],
+    mapping: MappingResultV2
+) -> ResolveResultV2:
+    """Parse user-provided hotspot residues and convert to standard format"""
+```
+
+**exporters.py** - Format Exporters
+```python
+def export_hlt_pdb_remarks(
+    resolved: ResolveResultV2,
+    output_path: Path
+) -> None:
+    """Export hotspot annotations in PDB REMARK format"""
+
+def export_hlt_format(
+    resolved: ResolveResultV2,
+    output_path: Path
+) -> None:
+    """Export hotspot annotations in HLT format"""
+```
+
+**spec.py** - Specification Definitions
+```python
+@dataclass(frozen=True)
+class ResidueRefAuth:
+    chain: str                       # Chain identifier
+    resi: int                        # Residue number
+    ins: str                         # Insertion code
+
+def normalize_target_hotspots(raw: Any) -> List[ResidueRefAuth]:
+    """
+    Normalize user input hotspot formats
+    
+    Supported formats:
+    - String: "A:305", "B:52A"
+    - Dict: {"chain": "A", "resi": 305, "ins": ""}
+    """
+```
+
+#### 5. External Tool Integration Module (`integrations/`)
+
+**rfantibody.py** - RFantibody Integration
+```python
+def run_rfantibody(
+    task_dir: Path,
+    hlt_path: Path,
+    target_path: Path,
+    hotspots_resolved: Optional[List[Dict]] = None,
+    design_loops: Optional[Sequence] = None,
+    num_designs: int = 20,
+    use_docker: bool = True,
+    docker_image: str = "rfantibody",
+    timeout: int = 3600,
+    retries: int = 1
+) -> Dict[str, object]:
+    """
+    Execute RFantibody/RFdiffusion inference
+    
+    Features:
+    1. Prepare input files and hotspot information
+    2. Build Docker command or direct invocation
+    3. Execute antibody design task
+    4. Collect output results
+    5. Handle retries and timeouts
+    """
+```
+
+**boltzgen.py** - BoltzGen Integration
+```python
+def generate_boltzgen_yaml(
+    mapping: MappingResultV2,
+    protocol: str = "nanobody-anything",
+    num_designs: int = 50
+) -> str:
+    """Generate YAML configuration required by BoltzGen"""
+
+def run_boltzgen(
+    task_dir: Path,
+    yaml_path: Path,
+    protocol: str = "nanobody-anything",
+    num_designs: int = 50,
+    mapping: MappingResultV2 = None,
+    use_docker: bool = True,
+    docker_image: str = "boltzgen",
+    timeout: int = 3600,
+    retries: int = 1
+) -> Dict[str, object]:
+    """
+    Execute BoltzGen (Boltz-1) prediction
+    
+    Features:
+    1. Generate or load YAML configuration
+    2. Setup Docker environment
+    3. Execute batch predictions
+    4. Collect and validate outputs
+    """
+```
+
+**normalize.py** - Standardization Workflow
+```python
+def normalize_and_derive(
+    scaffold_path: str,
+    target_path: str,
+    output_dir: str,
+    numbering_scheme: str = "chothia",
+    chain_role_map: Optional[Dict[str, str]] = None
+) -> Dict[str, object]:
+    """
+    Execute complete standardization and derived artifact generation workflow
+    
+    Steps:
+    1. Standardize scaffold and target structures
+    2. Build residue mappings
+    3. Perform CDR annotation
+    4. Generate hotspot resolution results
+    5. Export annotations in various formats
+    
+    Outputs:
+    - Standardized mmCIF files
+    - Residue mapping JSON
+    - CDR annotations (JSON/CSV)
+    - Hotspot resolution results
+    """
 ```
 
 ### Technology Choices

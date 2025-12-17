@@ -35,7 +35,12 @@ uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 # 终端 3: 启动 Worker
 python -m worker.worker
 
-# 4. 测试
+# 4. 快速测试（无需启动服务）
+make selftest
+# 或
+python scripts/selftest.py
+
+# 5. 完整冒烟测试（需要启动服务）
 python scripts/smoke_test.py
 ```
 
@@ -45,6 +50,20 @@ python scripts/smoke_test.py
 - 如未来确需引入 vendored 第三方库，请新建子目录时同步更新打包/部署忽略规则（如容器构建上下文、发行包清单），避免无意分发体积较大的依赖。
 
 ### 常用开发命令
+
+#### 快速自检
+```bash
+# 快速验证核心功能（无需启动 Redis/API/Worker）
+make selftest
+
+# 验证 AbNumber 集成
+python scripts/verify_abnumber.py
+
+# 运行单元测试
+pytest
+# 或
+make test
+```
 
 #### 测试 API
 ```bash
@@ -457,7 +476,12 @@ uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 # Terminal 3: Start Worker
 python -m worker.worker
 
-# 4. Test
+# 4. Quick test (no services needed)
+make selftest
+# or
+python scripts/selftest.py
+
+# 5. Full smoke test (requires services running)
 python scripts/smoke_test.py
 ```
 
@@ -467,6 +491,20 @@ python scripts/smoke_test.py
 - If you ever need to vendor a third-party library, add it under a new subdirectory and update packaging/deployment ignore rules (e.g., container build context, release manifests) so large dependencies are not shipped unintentionally.
 
 ### Common Development Commands
+
+#### Quick Self-Check
+```bash
+# Quick validation of core functionality (no Redis/API/Worker needed)
+make selftest
+
+# Verify AbNumber integration
+python scripts/verify_abnumber.py
+
+# Run unit tests
+pytest
+# or
+make test
+```
 
 #### Test API
 ```bash
