@@ -6,7 +6,7 @@ import logging
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional
+from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence
 
 try:  # pragma: no cover - optional dependency shim
     import yaml  # type: ignore
@@ -170,27 +170,94 @@ def generate_boltzgen_yaml(
     output_yaml_path: Path,
     protocol: str = "nanobody-anything",
 ) -> Path:
-    """Generate a BoltzGen design YAML using label_seq_id indices."""
+    """Generate scaffold-level YAML(s) plus a top-level design-spec for BoltzGen."""
 
     output_yaml_path = Path(output_yaml_path)
     output_yaml_path.parent.mkdir(parents=True, exist_ok=True)
 
-    scaffold_entry: Dict[str, object] = {
-        "file": str(standardized_scaffold.standardized_path),
+    scaffold_entries: Sequence = (
+        standardized_scaffold
+        if isinstance(standardized_scaffold, Sequence) and not isinstance(standardized_scaffold, (str, bytes, bytearray))
+        else [standardized_scaffold]
+    )
+
+    scaffold_yaml_paths: List[Path] = []
+    for scaffold in scaffold_entries:
+        scaffold_yaml_paths.append(
+            generate_scaffold_yaml(scaffold, scaffold_mapping, cdr_label_ranges, output_yaml_path.parent)
+        )
+
+    binding_types = _binding_types_from_cdrs(scaffold_mapping, cdr_label_ranges)
+    top_level_yaml = generate_top_level_yaml(
+        scaffold_yaml_paths,
+        target_standardized_path,
+        binding_types,
+        output_yaml_path,
+        protocol=protocol,
+    )
+
+    return top_level_yaml
+
+
+def generate_scaffold_yaml(
+    standardized_scaffold,
+    scaffold_mapping: MappingResultV2,
+    cdr_label_ranges: Mapping[str, object] | None,
+    out_dir: Path,
+) -> Path:
+    """Produce scaffold-level YAML aligned with BoltzGen examples."""
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    scaffold_name = Path(getattr(standardized_scaffold, "input_path", standardized_scaffold.standardized_path)).stem
+    scaffold_yaml = out_dir / f"{scaffold_name}_scaffold.yaml"
+
+    chain_id_value = cdr_label_ranges.get("chain_id") if cdr_label_ranges else None
+    chain_id = str(chain_id_value) if chain_id_value is not None else None
+    label_chain = scaffold_mapping.standardized.chain_id_map.get(chain_id, chain_id) if chain_id else None
+
+    scaffold_payload: Dict[str, object] = {
+        "path": str(standardized_scaffold.standardized_path),
+        "include": [{"chain": {"id": label_chain}}] if label_chain else [],
         "design": _cdr_design_ranges(scaffold_mapping, cdr_label_ranges),
         "design_insertions": _cdr_insertions(cdr_label_ranges, scaffold_mapping),
+        "structure_groups": [],
+        "exclude": [],
+        "reset_res_index": False,
     }
 
-    payload: Dict[str, object] = {"protocol": protocol, "scaffolds": [scaffold_entry]}
+    scaffold_yaml.write_text(yaml.safe_dump(scaffold_payload, sort_keys=False))
+    return scaffold_yaml
+
+
+def generate_top_level_yaml(
+    scaffold_yaml_paths: List[Path],
+    target_standardized_path: Path | None,
+    target_binding_types: List[Dict[str, object]],
+    out_yaml: Path,
+    *,
+    protocol: str = "nanobody-anything",
+) -> Path:
+    entities: List[Dict[str, object]] = []
 
     if target_standardized_path:
-        payload["target"] = {
-            "file": str(target_standardized_path),
-            "binding_types": _binding_types_from_cdrs(scaffold_mapping, cdr_label_ranges),
-        }
+        entities.append(
+            {
+                "file": {
+                    "path": str(target_standardized_path),
+                    "binding_types": {"epitope": target_binding_types or []},
+                }
+            }
+        )
 
-    output_yaml_path.write_text(yaml.safe_dump(payload, sort_keys=False))
-    return output_yaml_path
+    for scaffold_yaml in scaffold_yaml_paths:
+        entities.append({"file": {"path": str(scaffold_yaml)}})
+
+    payload: Dict[str, object] = {"protocol": protocol, "entities": entities}
+    out_yaml = Path(out_yaml)
+    out_yaml.write_text(yaml.safe_dump(payload, sort_keys=False))
+    return out_yaml
 
 
 def _cdr_design_ranges(
@@ -309,19 +376,52 @@ def _validate_yaml_indices(yaml_path: Path, mapping: MappingResultV2 | str | Pat
         return
 
     payload = yaml.safe_load(yaml_path.read_text()) or {}
-    scaffolds = payload.get("scaffolds") or []
     by_chain = _resolve_mapping_by_chain(mapping)
     if by_chain is None:
         return
+
+    scaffolds = payload.get("scaffolds") or []
+    if scaffolds:
+        _validate_scaffold_entries(scaffolds, by_chain)
+
+    entity_scaffolds = _scaffolds_from_entities(payload, yaml_path)
+    if entity_scaffolds:
+        _validate_scaffold_entries(entity_scaffolds, by_chain)
+
+
+def _scaffolds_from_entities(payload: Mapping[str, object], yaml_path: Path) -> List[Mapping[str, object]]:
+    scaffolds: List[Mapping[str, object]] = []
+    entities = payload.get("entities")
+    if not isinstance(entities, list):
+        return scaffolds
+
+    for entry in entities:
+        file_info = entry.get("file") if isinstance(entry, Mapping) else None
+        if not isinstance(file_info, Mapping):
+            continue
+        path_value = file_info.get("path")
+        if not path_value:
+            continue
+        path = Path(path_value)
+        if not path.is_absolute():
+            path = yaml_path.parent / path
+        if not path.exists() or path.suffix.lower() != ".yaml":
+            continue
+        scaffold_payload = yaml.safe_load(path.read_text()) or {}
+        scaffolds.append(scaffold_payload)
+    return scaffolds
+
+
+def _validate_scaffold_entries(scaffolds: List[Mapping[str, object]], by_chain: Mapping[str, List[object]]) -> None:
     for scaffold in scaffolds:
-        design_entries = scaffold.get("design", [])
+        design_entries = scaffold.get("design", []) if isinstance(scaffold, Mapping) else []
         for design in design_entries:
             chain = design.get("chain", {}).get("id")
             res_index = design.get("chain", {}).get("res_index")
             if not chain or not res_index:
                 continue
             _validate_range(res_index, chain, by_chain)
-        insertions = scaffold.get("design_insertions", [])
+        insertions = scaffold.get("design_insertions", []) if isinstance(scaffold, Mapping) else []
         for insertion in insertions:
             chain = insertion.get("chain", {}).get("id")
             res_index = insertion.get("chain", {}).get("res_index")
@@ -334,7 +434,12 @@ def _resolve_mapping_by_chain(mapping: MappingResultV2 | str | Path | dict) -> O
     if mapping is None:
         return None
     if isinstance(mapping, MappingResultV2):
-        return mapping.by_chain()
+        by_chain = dict(mapping.by_chain())
+        for auth_chain, residues in mapping.by_chain().items():
+            label_chain = mapping.standardized.chain_id_map.get(auth_chain)
+            if label_chain:
+                by_chain.setdefault(label_chain, residues)
+        return by_chain
     if isinstance(mapping, (str, Path)):
         mapping_dict = json.loads(Path(mapping).read_text())
     elif isinstance(mapping, dict):
@@ -345,6 +450,7 @@ def _resolve_mapping_by_chain(mapping: MappingResultV2 | str | Path | dict) -> O
     by_chain: Dict[str, List[object]] = {}
     for chain_entry in mapping_dict.get("chains", []):
         auth_chain = chain_entry.get("auth_chain_id") or chain_entry.get("auth_chain")
+        label_chain = chain_entry.get("label_asym_id") or chain_entry.get("label_chain_id")
         residues = []
         for residue in chain_entry.get("residues", []):
             label_seq = residue.get("mmcif_label", {}).get("label_seq_id")
@@ -353,6 +459,8 @@ def _resolve_mapping_by_chain(mapping: MappingResultV2 | str | Path | dict) -> O
             residues.append(SimpleNamespace(label_seq_id=int(label_seq)))
         if auth_chain:
             by_chain[auth_chain] = residues
+        if label_chain:
+            by_chain.setdefault(label_chain, residues)
     return by_chain
 
 
