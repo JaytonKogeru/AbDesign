@@ -16,6 +16,8 @@ AbDesign is a web service platform for antibody structure analysis and design. T
 - **[Development Guide (DEVELOPMENT.md)](DEVELOPMENT.md)** - Quick development guide and troubleshooting
 - **[Testing Guide (TESTING.md)](TESTING.md)** - Environment setup and testing methods
 
+The above documents are the canonical entry points; no extra summary or index files are required.
+
 ## Key Features
 
 ### 1. CDR Region Annotation
