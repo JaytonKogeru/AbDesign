@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
+from integrations.boltzgen import generate_boltzgen_yaml
 from pipeline.cdr import annotate_cdrs
 from pipeline.epitope.mapping import MappingResidueV2, MappingResultV2, build_residue_mapping_v2
 from pipeline.epitope.standardize import StandardizedStructure, standardize_structure
@@ -88,6 +89,7 @@ def normalize_and_derive(
         "target_hotspots_resolved": None,
     }
 
+    target_standardized = None
     if target_path:
         target_standardized = standardize_structure(Path(target_path), target_dir)
         target_mapping = build_residue_mapping_v2(target_standardized)
@@ -101,6 +103,19 @@ def normalize_and_derive(
                 "target_mapping_json": str(target_mapping_path),
             }
         )
+
+    try:
+        boltzgen_yaml_path = scaffold_dir / "boltzgen.yaml"
+        boltz_yaml = generate_boltzgen_yaml(
+            scaffold_standardized,
+            scaffold_mapping,
+            cdr_mapping_payload,
+            target_standardized.standardized_path if target_standardized else None,
+            boltzgen_yaml_path,
+        )
+        artifacts["boltzgen_yaml"] = str(boltz_yaml)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("BoltzGen YAML generation failed: %s", exc)
 
     return artifacts
 
