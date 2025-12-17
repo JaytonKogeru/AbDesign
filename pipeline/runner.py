@@ -13,7 +13,17 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
 from pipeline.cdr import CDRArtifacts, annotate_cdrs
-from pipeline.epitope.mapping import ResolveResult, build_residue_mapping, resolve_hotspots
+from pipeline.epitope.mapping import (
+    ResolveResult,
+    MappingResultV2,
+    ResolveResultV2,
+    build_residue_mapping,
+    build_residue_mapping_v2,
+    mapping_v1_from_v2,
+    resolve_hotspots,
+    resolve_hotspots_v2,
+)
+from pipeline.epitope.standardize import standardize_structure
 from pipeline.epitope.spec import normalize_target_hotspots
 
 
@@ -70,6 +80,8 @@ class PipelineArtifacts:
     cdr_csv: Optional[Path] = None
     target_residue_mapping: Optional[Path] = None
     target_hotspots_resolved: Optional[Path] = None
+    target_residue_mapping_v2: Optional[Path] = None
+    target_hotspots_resolved_v2: Optional[Path] = None
 
 
 @dataclass
@@ -84,9 +96,11 @@ class PipelineResult:
     scoring: Dict[str, Any]
     cdr_annotation: Optional[Dict[str, Any]]
     target_hotspots_input: Optional[list]
-    target_hotspots_resolved: Optional[ResolveResult]
+    target_hotspots_resolved: Optional[ResolveResult | ResolveResultV2]
     target_mapping_file: Optional[Path]
     config: Dict[str, Any]
+    target_hotspots_resolved_v2: Optional[ResolveResultV2] = None
+    target_mapping_file_v2: Optional[Path] = None
 
 
 def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
@@ -143,7 +157,7 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         "cdr_annotation": cdr_annotation,
         "target_hotspots_input": hotspot_payload.get("input") if hotspot_payload else None,
         "target_hotspots_resolved": hotspot_payload.get("resolved_summary") if hotspot_payload else None,
-        "target_mapping_file": str(hotspot_payload.get("mapping_path")) if hotspot_payload else None,
+        "target_mapping_file": str(hotspot_payload.get("mapping_path_v2")) if hotspot_payload else None,
         "artifacts": {
             "structure": str(predicted_path),
             "scores_csv": str(scores_csv_path),
@@ -152,6 +166,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
             "cdr_csv": str(cdr_csv_path) if cdr_annotation else None,
             "target_residue_mapping": str(hotspot_payload.get("mapping_path")) if hotspot_payload else None,
             "target_hotspots_resolved": str(hotspot_payload.get("resolved_path")) if hotspot_payload else None,
+            "target_residue_mapping_v2": str(hotspot_payload.get("mapping_path_v2")) if hotspot_payload else None,
+            "target_hotspots_resolved_v2": str(hotspot_payload.get("resolved_path_v2")) if hotspot_payload else None,
         },
     }
     summary_path.write_text(json.dumps(summary_payload, indent=2))
@@ -165,6 +181,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         cdr_csv=cdr_csv_path if cdr_annotation else None,
         target_residue_mapping=hotspot_payload.get("mapping_path") if hotspot_payload else None,
         target_hotspots_resolved=hotspot_payload.get("resolved_path") if hotspot_payload else None,
+        target_residue_mapping_v2=hotspot_payload.get("mapping_path_v2") if hotspot_payload else None,
+        target_hotspots_resolved_v2=hotspot_payload.get("resolved_path_v2") if hotspot_payload else None,
     )
     return PipelineResult(
         artifacts=artifacts,
@@ -175,8 +193,10 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         scoring=scoring_result,
         cdr_annotation=cdr_annotation,
         target_hotspots_input=hotspot_payload.get("input") if hotspot_payload else None,
-        target_hotspots_resolved=hotspot_payload.get("resolve_result") if hotspot_payload else None,
-        target_mapping_file=hotspot_payload.get("mapping_path") if hotspot_payload else None,
+        target_hotspots_resolved=hotspot_payload.get("resolve_result_v2") if hotspot_payload else None,
+        target_mapping_file=hotspot_payload.get("mapping_path_v2") if hotspot_payload else None,
+        target_hotspots_resolved_v2=hotspot_payload.get("resolve_result_v2") if hotspot_payload else None,
+        target_mapping_file_v2=hotspot_payload.get("mapping_path_v2") if hotspot_payload else None,
         config={**config.config_dict, "cdr_annotation": cdr_annotation},
     )
 
@@ -243,24 +263,41 @@ def _maybe_process_hotspots(inputs: Mapping[str, Any], output_dir: Path) -> Opti
 
     auth_hotspots = normalize_target_hotspots(raw_hotspots)
     structure_path = _select_structure_for_hotspots(inputs.get("files", {}))
+    scope = user_params.get("hotspot_residue_scope", "protein")
 
-    mapping_result = build_residue_mapping(structure_path)
+    standardized = standardize_structure(structure_path, output_dir)
+    mapping_result_v2 = build_residue_mapping_v2(standardized)
+    mapping_path_v2 = output_dir / "target_residue_mapping_v2.json"
+    mapping_result_v2.write_json(mapping_path_v2)
+
+    # legacy mapping for backward compatibility
+    mapping_result = mapping_v1_from_v2(mapping_result_v2)
     mapping_path = output_dir / "target_residue_mapping.json"
     mapping_result.write_json(mapping_path)
+
+    resolve_result_v2 = resolve_hotspots_v2(auth_hotspots, mapping_result_v2, scope=scope)
+    resolved_path_v2 = output_dir / "target_hotspots_resolved_v2.json"
+    resolve_result_v2.write_json(resolved_path_v2)
 
     resolve_result = resolve_hotspots(auth_hotspots, mapping_result)
     resolved_path = output_dir / "target_hotspots_resolved.json"
     resolve_result.write_json(resolved_path)
 
-    if resolve_result.errors:
-        raise ValueError(f"Failed to resolve target hotspots: {'; '.join(resolve_result.errors)}")
+    if resolve_result_v2.unmatched:
+        raise ValueError(
+            "Failed to resolve target hotspots: "
+            + "; ".join(entry.get("reason", "unknown") for entry in resolve_result_v2.unmatched)
+        )
 
     return {
         "input": [asdict(ref) for ref in auth_hotspots],
         "resolve_result": resolve_result,
-        "resolved_summary": resolve_result.to_dict(),
+        "resolve_result_v2": resolve_result_v2,
+        "resolved_summary": resolve_result_v2.to_dict(),
         "mapping_path": mapping_path,
         "resolved_path": resolved_path,
+        "mapping_path_v2": mapping_path_v2,
+        "resolved_path_v2": resolved_path_v2,
     }
 
 

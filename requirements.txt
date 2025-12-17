@@ -7,3 +7,4 @@ fakeredis==2.23.3
 requests==2.32.3
 abnumber[anarci]==0.3.1
 biopython==1.84
+gemmi>=0.6
