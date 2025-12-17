@@ -298,7 +298,6 @@ AbDesign/
 ├── samples/               # 示例文件
 │   ├── vhh_sample.pdb     # VHH 示例结构
 │   └── target_sample.pdb  # 靶标示例结构
-├── third_party/           # 第三方库（未使用）
 ├── requirements.txt       # Python 依赖
 ├── start_uvicorn.sh       # 启动脚本
 ├── TESTING.md            # 测试指南
