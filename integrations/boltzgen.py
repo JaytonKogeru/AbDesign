@@ -324,11 +324,12 @@ def _cdr_insertions(
             continue
 
         start_idx, end_idx = sorted((int(start), int(end)))
+        res_index_expr = str(start_idx) if start_idx == end_idx else f"{start_idx}..{end_idx}"
         insertions.append(
             {
                 "chain": {
                     "id": label_chain,
-                    "res_index": f"{start_idx}..{end_idx}",
+                    "res_index": res_index_expr,
                     "num_residues": str(num_res),
                 }
             }

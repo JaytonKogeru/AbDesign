@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
-from integrations.boltzgen import run_boltzgen
+from integrations.boltzgen import generate_boltzgen_yaml, run_boltzgen
 from integrations.normalize import normalize_and_derive
 from integrations.rfantibody import run_rfantibody
 from pipeline.cdr import CDRArtifacts, annotate_cdrs
@@ -194,6 +194,7 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
     scoring_result = _score_models(config.scoring, binding_site_result, inputs)
 
     normalization: Dict[str, Any] | None = None
+    normalization_context: Dict[str, Any] = {}
     cdr_annotation: Optional[Dict[str, Any]] = None
     cdr_mapping_payload: Optional[Dict[str, Any]] = None
     if scaffold_path:
@@ -204,6 +205,7 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
             numbering_scheme=numbering_scheme,
             chain_role_map=chain_role_map,
         )
+        normalization_context.update(normalization)
         cdr_annotation = normalization.get("scaffold_cdr_payload") or normalization.get("scaffold_cdr_mapping_payload")
         cdr_mapping_payload = normalization.get("scaffold_cdr_mapping_payload")
         cdr_json_path = Path(normalization.get("scaffold_cdr_annotations_json", cdr_json_path))
@@ -220,8 +222,23 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         standardized_override=normalization.get("target_standardized_path") if normalization else None,
     )
 
+    if hotspot_payload:
+        normalization_context.setdefault("target_hotspots_resolved_json", hotspot_payload.get("resolved_path"))
+        normalization_context.setdefault("target_mapping_json", hotspot_payload.get("mapping_path"))
+
     rfantibody_output: Optional[Dict[str, Any]] = None
     boltzgen_output: Optional[Dict[str, Any]] = None
+
+    scaffold_mapping_result: MappingResultV2 | None = None
+    if normalization and normalization.get("scaffold_mapping_json"):
+        scaffold_mapping_result = _load_mapping_result(normalization["scaffold_mapping_json"])
+
+    cdr_label_ranges = cdr_mapping_payload
+    if cdr_label_ranges is None and normalization and normalization.get("scaffold_cdr_mappings_json"):
+        try:
+            cdr_label_ranges = json.loads(Path(normalization["scaffold_cdr_mappings_json"]).read_text())
+        except FileNotFoundError:
+            LOGGER.warning("CDR label mapping JSON missing at %s", normalization["scaffold_cdr_mappings_json"])
 
     if normalization and config.integration.rfantibody.enabled and normalization.get("scaffold_hlt_path"):
         design_loops = _design_loops_from_cdr(cdr_mapping_payload)
@@ -232,6 +249,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
             hotspots_resolved=(hotspot_payload or {}).get("resolved_summary"),
             design_loops=design_loops,
             num_designs=config.integration.rfantibody.num_designs,
+            user_params=inputs.get("user_params"),
+            normalization=normalization_context,
             use_docker=config.integration.rfantibody.use_docker,
             docker_image=config.integration.rfantibody.docker_image,
             timeout=config.integration.rfantibody.timeout,
@@ -240,13 +259,29 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         if rfantibody_output.get("design_pdbs"):
             predicted_path = Path(rfantibody_output["design_pdbs"][0])
 
-    if normalization and normalization.get("boltzgen_yaml_path") and config.integration.boltzgen.enabled:
+    boltzgen_yaml_path = normalization.get("boltzgen_yaml_path") if normalization else None
+    if config.integration.boltzgen.enabled and scaffold_mapping_result:
+        try:
+            boltzgen_spec_dir = config.output_dir / "boltzgen_specs"
+            boltzgen_spec_dir.mkdir(parents=True, exist_ok=True)
+            boltzgen_yaml_path = boltzgen_yaml_path or generate_boltzgen_yaml(
+                scaffold_mapping_result.standardized,
+                scaffold_mapping_result,
+                cdr_label_ranges,
+                normalization_context.get("target_standardized_path") or target_path,
+                boltzgen_spec_dir / "boltzgen_design.yaml",
+                protocol=config.integration.boltzgen.protocol,
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("BoltzGen YAML generation in runner failed: %s", exc)
+
+    if config.integration.boltzgen.enabled and boltzgen_yaml_path:
         boltzgen_output = run_boltzgen(
             config.output_dir,
-            normalization.get("boltzgen_yaml_path"),
+            boltzgen_yaml_path,
             protocol=config.integration.boltzgen.protocol,
             num_designs=config.integration.boltzgen.num_designs,
-            mapping=normalization.get("scaffold_mapping_json"),
+            mapping=normalization.get("scaffold_mapping_json") if normalization else None,
             use_docker=config.integration.boltzgen.use_docker,
             docker_image=config.integration.boltzgen.docker_image,
             timeout=config.integration.boltzgen.timeout,
@@ -305,8 +340,8 @@ def run_pipeline(mode: str, inputs: Mapping[str, Any]) -> PipelineResult:
         scaffold_hlt_path=Path(normalization.get("scaffold_hlt_path"))
         if normalization and normalization.get("scaffold_hlt_path")
         else None,
-        boltzgen_yaml_path=Path(normalization.get("boltzgen_yaml_path"))
-        if normalization and normalization.get("boltzgen_yaml_path")
+        boltzgen_yaml_path=Path(boltzgen_yaml_path)
+        if boltzgen_yaml_path
         else None,
         rfantibody_outputs=rfantibody_output,
         boltzgen_outputs=boltzgen_output,
