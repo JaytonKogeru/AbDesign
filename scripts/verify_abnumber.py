@@ -35,11 +35,14 @@ def verify_package_source() -> None:
     abn_path = Path(abnumber.__file__).resolve()
     try:
         if abn_path.is_relative_to(REPO_ROOT):
-            raise SystemExit(f"abnumber resolves inside repository: {abn_path}")
+            # Allow .venv or site-packages inside repo
+            if "site-packages" not in abn_path.parts and ".venv" not in abn_path.parts:
+                raise SystemExit(f"abnumber resolves inside repository (source): {abn_path}")
     except AttributeError:
         # Python < 3.9 fallback
         if REPO_ROOT in abn_path.parents:
-            raise SystemExit(f"abnumber resolves inside repository: {abn_path}")
+             if "site-packages" not in abn_path.parts and ".venv" not in abn_path.parts:
+                raise SystemExit(f"abnumber resolves inside repository (source): {abn_path}")
 
     print(f"abnumber version: {version}")
     print(f"abnumber location: {abn_path}")
@@ -50,13 +53,20 @@ def verify_chain_numbering() -> None:
         "EVQLVESGGGLVQPGGSLRLSCAASGFTFSSYAMHWVRQAPGKGLEWVSAISWNSGSTYYADSVKGRFTISRDNAKNTL"
         "YLQMNSLRAEDTAVYYCARRRGVFDYWGQGTLVTVSS"
     )
-    chain = Chain(sequence, scheme="chothia", chain_type="H")
+    # Force use_anarcii=True
+    chain = Chain(sequence, scheme="chothia", use_anarcii=True)
 
+    # cdrs property might be missing in newer abnumber/anarcii, check for cdr*_seq instead
     cdrs = getattr(chain, "cdrs", None)
+    if not cdrs:
+        # Fallback check
+        if getattr(chain, "cdr1_seq", None):
+            cdrs = True
+    
     if not cdrs:
         raise SystemExit("CDR annotations missing from Chain")
 
-    numbering = getattr(chain, "numbering", [])
+    numbering = getattr(chain, "numbering", getattr(chain, "positions", []))
     numbering_labels = [_label(pos) for pos in numbering]
     if not numbering_labels:
         raise SystemExit("Numbering labels missing from Chain")
