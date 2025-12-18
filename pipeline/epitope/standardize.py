@@ -42,18 +42,19 @@ def _detect_format(path: Path) -> str:
 
 def _extract_chain_map(doc) -> Dict[str, str]:
     block = doc.sole_block()
-    loop = block.find_loop("_atom_site.auth_asym_id")
-    if loop is None:
+    table = block.find_mmcif_category("_atom_site.")
+    if not table:
         raise StructureStandardizationError("standardized structure missing _atom_site loop for chain mapping")
 
     try:
-        auth_idx = loop.tag_position("_atom_site.auth_asym_id")
-        label_idx = loop.tag_position("_atom_site.label_asym_id")
-    except KeyError as exc:  # noqa: BLE001
+        tags = list(table.tags)
+        auth_idx = tags.index("_atom_site.auth_asym_id")
+        label_idx = tags.index("_atom_site.label_asym_id")
+    except ValueError as exc:  # noqa: BLE001
         raise StructureStandardizationError("standardized structure missing chain identifier columns") from exc
 
     mapping: Dict[str, str] = {}
-    for row in loop:
+    for row in table:
         auth = row[auth_idx].strip()
         label = row[label_idx].strip()
         if auth and label and auth not in mapping:
@@ -81,10 +82,14 @@ def standardize_structure(input_path: Path, out_dir: Path) -> StandardizedStruct
     if not structure:
         raise StructureStandardizationError(f"structure {input_path} contains no models")
 
+    # Ensure entities are set up and label_seq_id is assigned
+    structure.setup_entities()
+    structure.assign_label_seq_id()
+
     out_dir.mkdir(parents=True, exist_ok=True)
     standardized_path = out_dir / "standardized_target.cif"
     doc = structure.make_mmcif_document()
-    doc.ensure_block().set_software_list([], generated=_dt.datetime.utcnow())
+    # doc.ensure_block().set_software_list([], generated=_dt.datetime.utcnow())
     doc.write_file(str(standardized_path))
 
     chain_map = _extract_chain_map(doc)

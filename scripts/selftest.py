@@ -86,5 +86,6 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Exception as exc:  # noqa: BLE001
-        print(exc)
+        import traceback
+        traceback.print_exc()
         sys.exit(1)

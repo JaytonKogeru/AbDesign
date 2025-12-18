@@ -25,8 +25,8 @@ class TestPipelineHotspotsIntegration(unittest.TestCase):
 
         result = run_pipeline("separate", inputs)
 
-        mapping_path = result.artifacts.target_residue_mapping
-        resolved_path = result.artifacts.target_hotspots_resolved
+        mapping_path = result.artifacts.target_residue_mapping_path
+        resolved_path = result.artifacts.target_hotspots_resolved_path
 
         self.assertIsNotNone(mapping_path)
         self.assertTrue(mapping_path.exists())
@@ -50,7 +50,7 @@ class TestPipelineHotspotsIntegration(unittest.TestCase):
         summary_payload = json.loads(result.artifacts.summary_json.read_text())
         self.assertTrue(summary_payload["target_hotspots_input"])
         self.assertTrue(summary_payload["target_hotspots_resolved"]["resolved"])
-        self.assertIn("target_hotspots_resolved", summary_payload["artifacts"])
+        self.assertIn("target_hotspots_resolved_path", summary_payload["artifacts"])
         self.assertNotIn("target_hotspots_resolved_v2", summary_payload["artifacts"])
 
     def _get_tmp_dir(self) -> Path:

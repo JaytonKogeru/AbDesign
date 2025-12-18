@@ -138,9 +138,22 @@ def _require_gemmi():
 
 
 def _monomer_category(resname: str) -> str:
+    # Fallback for standard amino acids
+    standard_aa = {
+        "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "ILE",
+        "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL",
+        "ASX", "GLX", "UNK"
+    }
+    if resname.upper() in standard_aa:
+        return "protein"
+
     gemmi = _require_gemmi()
     try:
-        monomer_type = gemmi.find_monomer_type(resname)
+        # Check if find_monomer_type exists (newer gemmi)
+        if hasattr(gemmi, "find_monomer_type"):
+            monomer_type = gemmi.find_monomer_type(resname)
+        else:
+            return "unknown"
     except Exception:  # noqa: BLE001
         return "unknown"
 
@@ -168,23 +181,24 @@ def _collect_residue_rows(standardized_path: Path) -> List[Tuple[str, int, str, 
     except Exception as exc:  # noqa: BLE001
         raise MappingError(f"failed to parse standardized structure {standardized_path}: {exc}") from exc
 
-    loop = block.find_loop("_atom_site.label_seq_id")
-    if loop is None:
+    table = block.find_mmcif_category("_atom_site.")
+    if not table:
         raise MappingError("standardized structure missing _atom_site loop for residue extraction")
 
     try:
-        label_seq_idx = loop.tag_position("_atom_site.label_seq_id")
-        label_asym_idx = loop.tag_position("_atom_site.label_asym_id")
-        auth_asym_idx = loop.tag_position("_atom_site.auth_asym_id")
-        auth_seq_idx = loop.tag_position("_atom_site.auth_seq_id")
-        ins_idx = loop.tag_position("_atom_site.pdbx_PDB_ins_code")
-        resname_idx = loop.tag_position("_atom_site.label_comp_id")
-    except KeyError as exc:  # noqa: BLE001
+        tags = list(table.tags)
+        label_seq_idx = tags.index("_atom_site.label_seq_id")
+        label_asym_idx = tags.index("_atom_site.label_asym_id")
+        auth_asym_idx = tags.index("_atom_site.auth_asym_id")
+        auth_seq_idx = tags.index("_atom_site.auth_seq_id")
+        ins_idx = tags.index("_atom_site.pdbx_PDB_ins_code")
+        resname_idx = tags.index("_atom_site.label_comp_id")
+    except ValueError as exc:  # noqa: BLE001
         raise MappingError("standardized structure missing required atom site columns") from exc
 
     seen: set[Tuple[str, int, str]] = set()
     rows: List[Tuple[str, int, str, str, int, str]] = []
-    for row in loop:
+    for row in table:
         auth_chain = row[auth_asym_idx].strip()
         label_asym = row[label_asym_idx].strip()
         resname = row[resname_idx].strip()
@@ -192,7 +206,11 @@ def _collect_residue_rows(standardized_path: Path) -> List[Tuple[str, int, str, 
         ins = "" if ins_raw in {"?", "."} else ins_raw
 
         try:
-            label_seq = int(row[label_seq_idx])
+            if row[label_seq_idx] in {".", "?"}:
+                label_seq = int(row[auth_seq_idx])
+            else:
+                label_seq = int(row[label_seq_idx])
+            
             auth_seq = int(row[auth_seq_idx])
         except ValueError as exc:  # noqa: BLE001
             raise MappingError("non-integer residue identifier encountered in standardized structure") from exc
