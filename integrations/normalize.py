@@ -321,7 +321,7 @@ def generate_hlt(
     new_structure.spacegroup_hm = structure.spacegroup_hm
 
     for model in structure:
-        new_model = gemmi.Model(model.name)
+        new_model = gemmi.Model(model.num)
         for orig_chain_name in _ordered_chains(orig_chains, chain_name_map):
             chain = model[orig_chain_name]
             new_chain = chain.clone()
