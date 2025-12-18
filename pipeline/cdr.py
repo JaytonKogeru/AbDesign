@@ -91,9 +91,11 @@ def annotate_cdrs(
     cdr_segments: List[Dict[str, Any]] = []
     numbering_labels: List[str] = []
     try:
-        chain = Chain(sequence, scheme=scheme)
+        # Force use_anarcii=True because anarci is not available in this environment
+        chain = Chain(sequence, scheme=scheme, use_anarcii=True)
 
-        numbering_labels = [_position_label(pos) for pos in getattr(chain, "numbering", [])]
+        numbering_source = getattr(chain, "numbering", getattr(chain, "positions", []))
+        numbering_labels = [_position_label(pos) for pos in numbering_source]
         cdr_segments = _collect_cdrs(chain)
 
         payload = {
