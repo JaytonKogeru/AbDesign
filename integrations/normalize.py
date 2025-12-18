@@ -516,7 +516,7 @@ def _validate_remarks(output_hlt_path: Path, remark_lines: List[str]) -> Dict[st
                 absolute_map[abs_idx] = {
                     "chain": chain.name.strip(),
                     "auth_res": int(residue.seqid.num),
-                    "ins": residue.seqid.get_insertion_code() or "",
+                    "ins": residue.seqid.icode or "",
                     "resname": residue.name,
                 }
                 abs_idx += 1
